@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Infinite Superflat</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="hud">
+        <span>⛏ Infinite Superflat</span><br>
+        <span>Pos: <span id="posDisplay">0, 0, 0</span></span><br>
+        <span>Chunks: <span id="chunkCount">0</span></span><br>
+        <span>FPS: <span id="fpsDisplay">0</span></span>
+    </div>
+    <button id="musicToggle" title="Toggle Music">🔊</button>
+
+    <!-- Three.js from CDN -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.128.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.128.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module" src="game.js"></script>
+</body>
+</html>

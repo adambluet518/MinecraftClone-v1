@@ -1,0 +1,48 @@
+body {
+    margin: 0;
+    overflow: hidden;
+    font-family: 'Courier New', monospace;
+}
+
+#hud {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    color: white;
+    background: rgba(0, 0, 0, 0.6);
+    padding: 10px 15px;
+    border-radius: 8px;
+    pointer-events: none;
+    font-size: 14px;
+    line-height: 1.6;
+    z-index: 10;
+    backdrop-filter: blur(4px);
+}
+
+#musicToggle {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.5);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    color: white;
+    font-size: 20px;
+    cursor: pointer;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+#musicToggle:hover {
+    border-color: #7ec850;
+    box-shadow: 0 0 16px rgba(126, 200, 80, 0.4);
+}
+
+#musicToggle.muted {
+    opacity: 0.5;
+}
