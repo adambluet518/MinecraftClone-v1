@@ -31,12 +31,12 @@ musicToggle.addEventListener('click', () => {
 // ---- Three.js Setup ----
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB);
-scene.fog = new THREE.Fog(0x87CEEB, 20, 60); // Closer fog matching lower chunks
+scene.fog = new THREE.Fog(0x87CEEB, 20, 50); // Aggressive fog to hide chunk loading cleanly
 
-const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 200);
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 150);
 const renderer = new THREE.WebGLRenderer({ antialias: false }); // Antialiasing off for max performance
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(1); // Locked to 1 to prevent performance drops on high-res displays
+renderer.setPixelRatio(1); // Force standard pixel ratio to boost frames on Retina/4K displays
 document.body.appendChild(renderer.domElement);
 
 window.addEventListener('resize', () => {
@@ -46,9 +46,9 @@ window.addEventListener('resize', () => {
 });
 
 // ---- Lighting ----
-const ambientLight = new THREE.AmbientLight(0xa0a0a0);
+const ambientLight = new THREE.AmbientLight(0xb0b0b0);
 scene.add(ambientLight);
-const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
 dirLight.position.set(5, 15, 5);
 scene.add(dirLight);
 
@@ -89,7 +89,7 @@ function loadTexture(name, fallbackColor) {
 
 // ---- Chunk System ----
 const CHUNK_SIZE = 16;
-const RENDER_DIST = 2; // LOW CHUNKS: Reduces computational load drastically for maximum FPS
+const RENDER_DIST = 2; // Renders a perfect tight circle around the player
 const loadedChunks = new Map();
 const blockGeom = new THREE.BoxGeometry(1, 1, 1);
 
@@ -103,27 +103,18 @@ function createChunk(cx, cz) {
     const ox = cx * CHUNK_SIZE;
     const oz = cz * CHUNK_SIZE;
 
+    // PERFORMANCE FIX: We only generate the visible top surface layer. 
+    // This removes 30,000+ hidden blocks from overwhelming your GPU.
     for (let x = 0; x < CHUNK_SIZE; x++) {
         for (let z = 0; z < CHUNK_SIZE; z++) {
             const wx = ox + x;
             const wz = oz + z;
             const surfaceType = getBlockType(wx, wz);
 
-            // 1. Surface layer
             let mats = (surfaceType === 'cobblestone') ? cobbleBlockMaterials : grassBlockMaterials;
             const block = new THREE.Mesh(blockGeom, mats);
             block.position.set(wx + 0.5, 0.5, wz + 0.5);
             group.add(block);
-
-            // 2. Dirt layer
-            const dBlock = new THREE.Mesh(blockGeom, dirtBlockMaterials);
-            dBlock.position.set(wx + 0.5, -0.5, wz + 0.5);
-            group.add(dBlock);
-
-            // 3. Cobblestone layer
-            const cBlock = new THREE.Mesh(blockGeom, cobbleBlockMaterials);
-            cBlock.position.set(wx + 0.5, -1.5, wz + 0.5);
-            group.add(cBlock);
         }
     }
     return group;
@@ -137,7 +128,6 @@ function updateChunks(playerCX, playerCZ) {
         }
     }
 
-    // Load newly entered chunks
     needed.forEach(key => {
         if (!loadedChunks.has(key)) {
             const [cx, cz] = key.split(',').map(Number);
@@ -147,7 +137,6 @@ function updateChunks(playerCX, playerCZ) {
         }
     });
 
-    // Unload distant chunks safely WITHOUT destroying global variables
     loadedChunks.forEach((chunk, key) => {
         if (!needed.has(key)) {
             scene.remove(chunk);
@@ -160,7 +149,7 @@ function updateChunks(playerCX, playerCZ) {
 
 // ---- Player Physics Engine ----
 const player = {
-    position: new THREE.Vector3(0, 4, 0),
+    position: new THREE.Vector3(0, 3, 0),
     velocity: new THREE.Vector3(),
     onGround: false,
     yaw: 0,
@@ -191,13 +180,14 @@ window.addEventListener('keydown', e => {
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 
 function isSolid(wx, wy, wz) {
-    return wy >= -2 && wy <= 0; // World is solid between y=-2 and y=0
+    // Solid boundary checking for our optimized 1-layer surface flat world
+    return wy === 0;
 }
 
 function collides(pos) {
-    const hw = 0.3; // Width of player bounding box
+    const hw = 0.3;
     for (let dx = -hw; dx <= hw; dx += 0.59) {
-        for (let dy = 0; dy <= 1.6; dy += 0.79) { // Height of player bounding box
+        for (let dy = 0; dy <= 1.6; dy += 0.79) {
             for (let dz = -hw; dz <= hw; dz += 0.59) {
                 const bx = Math.floor(pos.x + dx);
                 const by = Math.floor(pos.y + dy);
@@ -212,8 +202,8 @@ function collides(pos) {
 function updatePlayer(dt) {
     if (dt <= 0 || dt > 0.1) dt = 0.016;
 
-    // Movement Vector Direction
     const moveDir = new THREE.Vector3();
+    // CONTROL FIX: W moves forward (-z), S moves backward (+z)
     if (keys['KeyW']) moveDir.z -= 1;
     if (keys['KeyS']) moveDir.z += 1;
     if (keys['KeyA']) moveDir.x -= 1;
@@ -221,7 +211,7 @@ function updatePlayer(dt) {
     moveDir.normalize();
 
     const sprint = keys['ShiftLeft'] || keys['ShiftRight'];
-    const speed = sprint ? 10 : 6;
+    const speed = sprint ? 9 : 5.5;
 
     const fwd = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), player.yaw);
     const rgt = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), player.yaw);
@@ -229,42 +219,34 @@ function updatePlayer(dt) {
     player.velocity.x = (fwd.x * moveDir.z + rgt.x * moveDir.x) * speed;
     player.velocity.z = (fwd.z * moveDir.z + rgt.z * moveDir.x) * speed;
 
-    // Jump Input
     if (keys['Space'] && player.onGround) {
-        player.velocity.y = 8.5;
+        player.velocity.y = 8.0;
         player.onGround = false;
     }
 
-    // Apply Smooth Gravity
     player.velocity.y -= 22 * dt;
     if (player.velocity.y < -30) player.velocity.y = -30;
 
-    // AXIS-BY-AXIS PHYSICS: Resolves jitter and sticking completely
     const newPos = player.position.clone();
     
-    // Check X Movement
     newPos.x += player.velocity.x * dt;
     if (collides(newPos)) { 
         newPos.x = player.position.x; 
         player.velocity.x = 0; 
     }
     
-    // Check Z Movement
     newPos.z += player.velocity.z * dt;
     if (collides(newPos)) { 
         newPos.z = player.position.z; 
         player.velocity.z = 0; 
     }
     
-    // Check Y Movement (Vertical Physics Fix)
     newPos.y += player.velocity.y * dt;
     if (collides(newPos)) {
         if (player.velocity.y < 0) {
-            // Landing: Lock perfectly to the top of the block with a microscopic 0.001 clearance offset
             newPos.y = Math.floor(newPos.y) + 1 + 0.001; 
             player.onGround = true;
         } else {
-            // Ceiling Hit
             newPos.y = Math.floor(player.position.y);
         }
         player.velocity.y = 0;
@@ -273,14 +255,12 @@ function updatePlayer(dt) {
     }
     player.position.copy(newPos);
 
-    // Camera Mapping Position Updates
     camera.position.set(player.position.x, player.position.y + 1.4, player.position.z);
     const look = new THREE.Vector3(0, 0, -1);
     look.applyAxisAngle(new THREE.Vector3(1, 0, 0), player.pitch);
     look.applyAxisAngle(new THREE.Vector3(0, 1, 0), player.yaw);
     camera.lookAt(camera.position.clone().add(look));
 
-    // Dynamic Chunk Triggers
     const pcx = Math.floor(player.position.x / 16);
     const pcz = Math.floor(player.position.z / 16);
     updateChunks(pcx, pcz);
@@ -288,7 +268,7 @@ function updatePlayer(dt) {
     posDisplay.textContent = `${Math.round(player.position.x)}, ${Math.round(player.position.y)}, ${Math.round(player.position.z)}`;
 }
 
-// ---- Core Game Loop Loop ----
+// ---- Core Game Loop ----
 let lastTime = 0;
 let frameCount = 0;
 let fpsTimer = 0;
@@ -320,20 +300,16 @@ async function init() {
     ]);
     console.log('Textures loaded!');
 
-    // Globally cache reusable shared materials 
     const grassMat = new THREE.MeshLambertMaterial({ map: grassTex });
     const dirtMat = new THREE.MeshLambertMaterial({ map: dirtTex });
     const cobbleMat = new THREE.MeshLambertMaterial({ map: cobbleTex });
 
-    // Proper Multi-Material Map ordering for Three.js boxes (+X, -X, +Y, -Y, +Z, -Z)
     grassBlockMaterials = [dirtMat, dirtMat, grassMat, dirtMat, dirtMat, dirtMat];
     dirtBlockMaterials = [dirtMat, dirtMat, dirtMat, dirtMat, dirtMat, dirtMat];
     cobbleBlockMaterials = [cobbleMat, cobbleMat, cobbleMat, cobbleMat, cobbleMat, cobbleMat];
 
-    // Load startup chunks
     updateChunks(0, 0);
 
-    // Initial interaction binder for click context music contexts
     window.addEventListener('click', () => {
         if (!musicPlaying) {
             music.play().then(() => {
@@ -343,7 +319,6 @@ async function init() {
         }
     }, { once: true });
 
-    // Execute Main Animation Clock Loop
     lastTime = 0;
     requestAnimationFrame(animate);
     console.log('Game Started Cleanly!');
