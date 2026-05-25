@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 
 // ---- DOM Elements ----
-const posDisplay = document.getElementById('posDisplay');
-const chunkCountEl = document.getElementById('chunkCount');
-const fpsDisplay = document.getElementById('fpsDisplay');
-const musicToggle = document.getElementById('musicToggle');
+const posDisplay = document.getElementById('posDisplay') || { set textContent(v){} };
+const chunkCountEl = document.getElementById('chunkCount') || { set textContent(v){} };
+const fpsDisplay = document.getElementById('fpsDisplay') || { set textContent(v){} };
+const musicToggle = document.getElementById('musicToggle') || document.createElement('div');
 
 // ---- Crosshair Overlay ----
 const crosshair = document.createElement('div');
@@ -46,11 +46,9 @@ musicToggle.addEventListener('click', () => {
     if (musicPlaying) {
         music.pause();
         musicToggle.textContent = '🔇';
-        musicToggle.classList.add('muted');
     } else {
         music.play().then(() => {
             musicToggle.textContent = '🔊';
-            musicToggle.classList.remove('muted');
         }).catch(() => {
             musicToggle.textContent = '🚫';
         });
@@ -144,25 +142,33 @@ function createChunk(cx, cz) {
 
     const categorizedPositions = { grass: [], dirt: [], cobblestone: [] };
 
-    // 1. Populate default terrain blocks if they don't exist yet
+    // 1. Generate local grid data into the global block map first
     for (let x = 0; x < CHUNK_SIZE; x++) {
         for (let z = 0; z < CHUNK_SIZE; z++) {
             const wx = ox + x;
             const wz = oz + z;
             const surfaceY = getNoiseHeight(wx, wz);
-            const keySurface = `${wx},${surfaceY},${wz}`;
-
-            if (!worldBlocksData.has(keySurface)) {
-                const rand = Math.abs(Math.floor(Math.sin(wx * 12.9898 + wz * 78.233) * 43758)) % 100;
-                worldBlocksData.set(keySurface, rand < 4 ? 'cobblestone' : 'grass');
+            
+            // Generate layers down to a base depth to make the ground truly solid
+            for (let wy = surfaceY - 3; wy <= surfaceY; wy++) {
+                const key = `${wx},${wy},${wz}`;
+                if (!worldBlocksData.has(key)) {
+                    if (wy === surfaceY) {
+                        const rand = Math.abs(Math.floor(Math.sin(wx * 12.9898 + wz * 78.233) * 43758)) % 100;
+                        worldBlocksData.set(key, rand < 4 ? 'cobblestone' : 'grass');
+                    } else {
+                        worldBlocksData.set(key, 'dirt');
+                    }
+                }
             }
         }
     }
 
-    // 2. Distribute blocks belonging to this chunk into their texture groups
+    // 2. Query only local block coordinates matching this chunk boundary context
     worldBlocksData.forEach((type, key) => {
         if (type === 'air') return;
         const [bx, by, bz] = key.split(',').map(Number);
+        
         const bcx = Math.floor(bx / CHUNK_SIZE);
         const bcz = Math.floor(bz / CHUNK_SIZE);
 
@@ -175,7 +181,7 @@ function createChunk(cx, cz) {
 
     const dummy = new THREE.Object3D();
 
-    // 3. Create the optimized InstancedMesh for each block type
+    // 3. Construct individual InstancedMeshes
     Object.keys(categorizedPositions).forEach(type => {
         const blocks = categorizedPositions[type];
         if (blocks.length === 0) return;
@@ -188,7 +194,7 @@ function createChunk(cx, cz) {
         instMesh.userData = { blockKeys: [] };
 
         blocks.forEach((block, idx) => {
-            dummy.position.set(block.x, block.y, block.z); // Fixed: Corrected the mapping to block.z here
+            dummy.position.set(block.x, block.y, block.z);
             dummy.updateMatrix();
             instMesh.setMatrixAt(idx, dummy.matrix);
             instMesh.userData.blockKeys[idx] = block.key;
@@ -253,7 +259,7 @@ function updateChunks(playerCX, playerCZ) {
 
 // ---- Player & Physics Engine ----
 const player = {
-    position: new THREE.Vector3(0, 5, 0),
+    position: new THREE.Vector3(0, 0, 0),
     velocity: new THREE.Vector3(),
     onGround: false,
     yaw: 0,
