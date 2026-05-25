@@ -383,8 +383,8 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     function updatePlayer(dt) {
         const moveDir = new THREE.Vector3();
-        if (keys['KeyW']) moveDir.z -= 1;
-        if (keys['KeyS']) moveDir.z += 1;
+        if (keys['KeyS']) moveDir.z -= 1;
+        if (keys['KeyW']) moveDir.z += 1;
         if (keys['KeyA']) moveDir.x -= 1;
         if (keys['KeyD']) moveDir.x += 1;
         if (moveDir.lengthSq() > 0) moveDir.normalize();
