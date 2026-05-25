@@ -144,7 +144,7 @@ function createChunk(cx, cz) {
 
     const categorizedPositions = { grass: [], dirt: [], cobblestone: [] };
 
-    // 1. Ensure procedural data always exists first for this chunk layout
+    // 1. Populate default terrain blocks if they don't exist yet
     for (let x = 0; x < CHUNK_SIZE; x++) {
         for (let z = 0; z < CHUNK_SIZE; z++) {
             const wx = ox + x;
@@ -159,7 +159,7 @@ function createChunk(cx, cz) {
         }
     }
 
-    // 2. Read back from data maps cleanly
+    // 2. Distribute blocks belonging to this chunk into their texture groups
     worldBlocksData.forEach((type, key) => {
         if (type === 'air') return;
         const [bx, by, bz] = key.split(',').map(Number);
@@ -175,6 +175,7 @@ function createChunk(cx, cz) {
 
     const dummy = new THREE.Object3D();
 
+    // 3. Create the optimized InstancedMesh for each block type
     Object.keys(categorizedPositions).forEach(type => {
         const blocks = categorizedPositions[type];
         if (blocks.length === 0) return;
@@ -187,7 +188,7 @@ function createChunk(cx, cz) {
         instMesh.userData = { blockKeys: [] };
 
         blocks.forEach((block, idx) => {
-            dummy.position.set(block.x, block.y, block.blockY ?? block.y);
+            dummy.position.set(block.x, block.y, block.z); // Fixed: Corrected the mapping to block.z here
             dummy.updateMatrix();
             instMesh.setMatrixAt(idx, dummy.matrix);
             instMesh.userData.blockKeys[idx] = block.key;
