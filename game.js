@@ -92,7 +92,6 @@ window.addEventListener('DOMContentLoaded', async () => {
         return tex;
     }
 
-    // Smart Fallback: Procedurally draws a crack line if your uploaded PNGs get blocked by the server
     function createCrackFallback(stage) {
         const canvas = document.createElement('canvas');
         canvas.width = 64; canvas.height = 64;
@@ -135,7 +134,6 @@ window.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // Base Environment Assets
     const [grassTex, dirtTex, cobbleTex, logSideTex, logTopTex, leavesTex, planksTex] = await Promise.all([
         loadTexture('grass.png', '#7ec850'),
         loadTexture('dirt.png', '#8b5a2b'),
@@ -146,7 +144,6 @@ window.addEventListener('DOMContentLoaded', async () => {
         loadTexture('planks.png', '#a0522d')
     ]);
 
-    // Loads your destroy stages. Uses the drawn fallback if the file gets blocked.
     const breakTextures = await Promise.all(
         Array.from({ length: 10 }, (_, i) => loadTexture(`destroy_stage_${i}.png`, createCrackFallback(i)))
     );
@@ -156,8 +153,15 @@ window.addEventListener('DOMContentLoaded', async () => {
     const cobbleMat = new THREE.MeshLambertMaterial({ map: cobbleTex });
     const logSideMat = new THREE.MeshLambertMaterial({ map: logSideTex });
     const logTopMat = new THREE.MeshLambertMaterial({ map: logTopTex });
-    const leavesMat = new THREE.MeshLambertMaterial({ map: leavesTex });
     const planksMat = new THREE.MeshLambertMaterial({ map: planksTex });
+    
+    // FIX 1: Leaves must allow raycasts to pass through the transparent gaps to hit logs
+    const leavesMat = new THREE.MeshLambertMaterial({ 
+        map: leavesTex, 
+        transparent: true, 
+        alphaTest: 0.5,
+        side: THREE.DoubleSide
+    });
 
     const grassBlockMaterials = [dirtMat, dirtMat, grassMat, dirtMat, dirtMat, dirtMat];
     const dirtBlockMaterials = [dirtMat, dirtMat, dirtMat, dirtMat, dirtMat, dirtMat];
@@ -166,11 +170,10 @@ window.addEventListener('DOMContentLoaded', async () => {
     const leavesBlockMaterials = [leavesMat, leavesMat, leavesMat, leavesMat, leavesMat, leavesMat];
     const plankBlockMaterials = [planksMat, planksMat, planksMat, planksMat, planksMat, planksMat];
 
-    // ---- Transparency Fix Overlay System ----
     const crackMat = new THREE.MeshBasicMaterial({ 
         map: breakTextures[0], 
         transparent: true,
-        alphaTest: 0.1, // Purges tiny transparency artifacts to prevent black squares
+        alphaTest: 0.1, 
         polygonOffset: true, 
         polygonOffsetFactor: -4, 
         polygonOffsetUnits: -4
@@ -245,14 +248,12 @@ window.addEventListener('DOMContentLoaded', async () => {
                     }
                 }
 
-                // Structures Generation
                 const surfaceKey = `${wx},${surfaceY},${wz}`;
                 if (worldBlocksData.get(surfaceKey) === 'grass') {
                     if (spawnWellInChunk && wx === wellCenterX && wz === wellCenterZ) {
                         for (let vx = -2; vx <= 2; vx++) {
                             for (let vz = -2; vz <= 2; vz++) {
                                 const baseKey = `${wx + vx},${surfaceY},${wz + vz}`;
-                                // FIX: Protect all structures from overwriting player actions
                                 if (!worldBlocksData.has(baseKey)) worldBlocksData.set(baseKey, 'planks'); 
                                 
                                 if (Math.abs(vx) === 2 && Math.abs(vz) === 2) {
@@ -275,7 +276,6 @@ window.addEventListener('DOMContentLoaded', async () => {
                             const trunkHeight = 4 + Math.floor(hash * 100) % 3;
                             for (let th = 1; th <= trunkHeight; th++) {
                                 const logKey = `${wx},${surfaceY + th},${wz}`;
-                                // FIX: Stop the chunk engine from instantly regenerating broken logs
                                 if (!worldBlocksData.has(logKey)) {
                                     worldBlocksData.set(logKey, 'log');
                                 }
@@ -334,6 +334,9 @@ window.addEventListener('DOMContentLoaded', async () => {
             });
 
             instMesh.instanceMatrix.needsUpdate = true;
+            instMesh.computeBoundingSphere(); // FIX 2: Compute spheres for flawless raycasting
+            instMesh.computeBoundingBox();
+            
             group.add(instMesh);
         });
 
@@ -344,7 +347,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         raycastTargets = [];
         loadedChunks.forEach(chunkGroup => {
             chunkGroup.children.forEach(child => {
-                if (child instanceof THREE.InstancedMesh) {
+                if (child.isInstancedMesh) {
                     raycastTargets.push(child);
                 }
             });
@@ -377,6 +380,8 @@ window.addEventListener('DOMContentLoaded', async () => {
         loadedChunks.forEach((chunk, key) => {
             if (!needed.has(key)) {
                 scene.remove(chunk);
+                // FIX 3: Fully dispose geometries to purge zombie meshes stopping raycasts
+                chunk.children.forEach(child => { if (child.isInstancedMesh) child.dispose(); });
                 loadedChunks.delete(key);
                 modified = true;
             }
@@ -476,7 +481,10 @@ window.addEventListener('DOMContentLoaded', async () => {
                     const targetChunkKey = `${pcx},${pcz}`;
                     
                     if (loadedChunks.has(targetChunkKey)) {
-                        scene.remove(loadedChunks.get(targetChunkKey));
+                        const oldChunk = loadedChunks.get(targetChunkKey);
+                        scene.remove(oldChunk);
+                        oldChunk.children.forEach(child => { if (child.isInstancedMesh) child.dispose(); });
+                        
                         const freshChunk = createChunk(pcx, pcz);
                         loadedChunks.set(targetChunkKey, freshChunk);
                         scene.add(freshChunk);
@@ -515,7 +523,7 @@ window.addEventListener('DOMContentLoaded', async () => {
                     crackMat.needsUpdate = true;
 
                     if (miningProgress >= 1.0) {
-                        worldBlocksData.set(targetKey, 'air'); // Marks it broken so the chunk ignores it from now on!
+                        worldBlocksData.set(targetKey, 'air'); 
                         miningTargetKey = null;
                         crackMesh.visible = false;
 
@@ -524,7 +532,11 @@ window.addEventListener('DOMContentLoaded', async () => {
                         const chunkKey = `${cx},${cz}`;
 
                         if (loadedChunks.has(chunkKey)) {
-                            scene.remove(loadedChunks.get(chunkKey));
+                            const oldChunk = loadedChunks.get(chunkKey);
+                            scene.remove(oldChunk);
+                            // Purge the old log mesh permanently so it can't accidentally catch raycasts
+                            oldChunk.children.forEach(child => { if (child.isInstancedMesh) child.dispose(); });
+
                             const freshChunk = createChunk(cx, cz);
                             loadedChunks.set(chunkKey, freshChunk);
                             scene.add(freshChunk);
@@ -657,5 +669,4 @@ window.addEventListener('DOMContentLoaded', async () => {
     rebuildRaycastTargetsList();
 
     requestAnimationFrame(animate);
-    console.log('Tree Regen Bug squashed & Dynamic Animation Fallbacks active.');
 });
