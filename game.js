@@ -58,7 +58,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     // ---- Three.js Setup ----
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x87CEEB);
-    scene.fog = new THREE.Fog(0x87CEEB, 40, 100); 
+    scene.fog = new THREE.Fog(0x87CEEB, 50, 120); 
 
     const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 250);
     const renderer = new THREE.WebGLRenderer({ antialias: true }); 
@@ -187,12 +187,15 @@ window.addEventListener('DOMContentLoaded', async () => {
     crackMesh.visible = false;
     scene.add(crackMesh);
 
-    // ---- Procedural Generation Math ----
+    // ---- FIX 1 & 2: Consistent height calculation + NO CAVES ----
     function getNoiseHeight(wx, wz) {
-        const wave1 = Math.sin(wx * 0.045) * Math.cos(wz * 0.045) * 3.5;
-        const wave2 = Math.sin(wx * 0.12 + 1.8) * 1.2;
-        const wave3 = Math.cos(wz * 0.13 + 2.3) * 1.1;
-        return Math.floor(4 + wave1 + wave2 + wave3); // higher base height to avoid holes
+        // Use floor for consistent chunk boundary behavior
+        const x = Math.floor(wx);
+        const z = Math.floor(wz);
+        const wave1 = Math.sin(x * 0.045) * Math.cos(z * 0.045) * 3.5;
+        const wave2 = Math.sin(x * 0.12 + 1.8) * 1.2;
+        const wave3 = Math.cos(z * 0.13 + 2.3) * 1.1;
+        return Math.floor(5 + wave1 + wave2 + wave3); // Raised base height
     }
 
     function coordHash(x, z) {
@@ -200,12 +203,9 @@ window.addEventListener('DOMContentLoaded', async () => {
         return Math.abs(val - Math.floor(val));
     }
 
-    // Improved cave check - never removes surface blocks
+    // CAVES COMPLETELY DISABLED to prevent holes
     function isCaveSpace(wx, wy, wz) {
-        const surfaceY = getNoiseHeight(wx, wz);
-        if (wy >= surfaceY - 1) return false; // keep surface and near-surface solid
-        const caveDensity = Math.sin(wx * 0.22) + Math.cos(wy * 0.25) + Math.sin(wz * 0.22);
-        return caveDensity > 1.4; // less aggressive caves
+        return false; // NO CAVES - this was causing the terrain voids
     }
 
     // ---- Chunk System ----
@@ -217,29 +217,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     let raycastTargets = []; 
     let lastPlayerCX = null;
     let lastPlayerCZ = null;
-
-    function ensureBlockGenerated(x, y, z) {
-        const key = `${x},${y},${z}`;
-        if (worldBlocksData.has(key)) return worldBlocksData.get(key);
-        const surfaceY = getNoiseHeight(x, z);
-        if (y > surfaceY) {
-            worldBlocksData.set(key, 'air');
-            return 'air';
-        }
-        if (y === surfaceY) {
-            worldBlocksData.set(key, 'grass');
-            return 'grass';
-        } else if (y > surfaceY - 3) {
-            worldBlocksData.set(key, 'dirt');
-            return 'dirt';
-        } else if (y > 0) {
-            worldBlocksData.set(key, 'cobblestone');
-            return 'cobblestone';
-        } else {
-            worldBlocksData.set(key, 'cobblestone');
-            return 'cobblestone';
-        }
-    }
 
     function createChunk(cx, cz) {
         const group = new THREE.Group();
@@ -254,30 +231,32 @@ window.addEventListener('DOMContentLoaded', async () => {
         const wellCenterX = ox + 4 + Math.floor(chunkHash * 1000) % 8;
         const wellCenterZ = oz + 4 + Math.floor(chunkHash * 2000) % 8;
 
-        // First, ensure all blocks in this chunk are generated (no holes)
+        // FIX 3: Generate ALL blocks from bottom to top with NO air gaps in terrain
         for (let x = 0; x < CHUNK_SIZE; x++) {
             for (let z = 0; z < CHUNK_SIZE; z++) {
                 const wx = ox + x;
                 const wz = oz + z;
                 const surfaceY = getNoiseHeight(wx, wz);
-                for (let wy = 0; wy <= surfaceY + 6; wy++) { // generate up to tree height
+                
+                // Generate from y=0 all the way up to surface + tree space
+                for (let wy = 0; wy <= surfaceY + 6; wy++) {
                     const key = `${wx},${wy},${wz}`;
+                    
                     if (!worldBlocksData.has(key)) {
-                        if (wy > surfaceY) {
-                            worldBlocksData.set(key, 'air');
-                        } else if (isCaveSpace(wx, wy, wz)) {
-                            worldBlocksData.set(key, 'air');
+                        // No caves - every block is solid terrain until surface
+                        if (wy === surfaceY) {
+                            worldBlocksData.set(key, 'grass');
+                        } else if (wy > surfaceY - 3) {
+                            worldBlocksData.set(key, 'dirt');
                         } else {
-                            if (wy === surfaceY) worldBlocksData.set(key, 'grass');
-                            else if (wy > surfaceY - 3) worldBlocksData.set(key, 'dirt');
-                            else worldBlocksData.set(key, 'cobblestone');
+                            worldBlocksData.set(key, 'cobblestone');
                         }
                     }
                 }
             }
         }
 
-        // Add trees and structures
+        // Add trees and structures on TOP of solid terrain
         for (let x = 0; x < CHUNK_SIZE; x++) {
             for (let z = 0; z < CHUNK_SIZE; z++) {
                 const wx = ox + x;
@@ -287,11 +266,12 @@ window.addEventListener('DOMContentLoaded', async () => {
                 
                 if (worldBlocksData.get(surfaceKey) === 'grass') {
                     if (spawnWellInChunk && wx === wellCenterX && wz === wellCenterZ) {
-                        // spawn well structure (same as before)
+                        // Spawn well structure
                         for (let vx = -2; vx <= 2; vx++) {
                             for (let vz = -2; vz <= 2; vz++) {
                                 const baseKey = `${wx + vx},${surfaceY},${wz + vz}`;
                                 if (!worldBlocksData.has(baseKey)) worldBlocksData.set(baseKey, 'planks'); 
+                                
                                 if (Math.abs(vx) === 2 && Math.abs(vz) === 2) {
                                     for (let h = 1; h <= 3; h++) {
                                         const k = `${wx + vx},${surfaceY + h},${wz + vz}`;
@@ -421,7 +401,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     // ---- Player Physics & Interaction ----
     function findSafeSpawnHeight(x, z) {
-        for(let y = 60; y > 0; y--) {
+        for(let y = 70; y > 0; y--) {
             const key = `${Math.floor(x)},${y},${Math.floor(z)}`;
             if(worldBlocksData.has(key) && worldBlocksData.get(key) !== 'air') {
                 return y + 2;
@@ -710,7 +690,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     updateChunks(Math.floor(spawnX / CHUNK_SIZE), Math.floor(spawnZ / CHUNK_SIZE));
     rebuildRaycastTargetsList();
     
-    // Wait one frame for chunks to be fully populated, then set safe height
+    // Wait for chunks to populate then set safe height
     setTimeout(() => {
         const safeY = findSafeSpawnHeight(spawnX, spawnZ);
         player.position.set(spawnX, safeY, spawnZ);
