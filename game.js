@@ -78,7 +78,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     dirLight.position.set(10, 20, 7);
     scene.add(dirLight);
 
-    // ---- Textures ----
+    // ---- Textures Loader ----
     const textureLoader = new THREE.TextureLoader();
     function createFallbackTexture(color) {
         const canvas = document.createElement('canvas');
@@ -106,6 +106,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    // Base Environment Assets
     const [grassTex, dirtTex, cobbleTex, logSideTex, logTopTex, leavesTex, planksTex] = await Promise.all([
         loadTexture('grass.png', '#7ec850'),
         loadTexture('dirt.png', '#8b5a2b'),
@@ -115,6 +116,11 @@ window.addEventListener('DOMContentLoaded', async () => {
         loadTexture('leaves.png', '#2e8b57'),
         loadTexture('planks.png', '#a0522d')
     ]);
+
+    // Loads destroy_stage_0.png through destroy_stage_9.png dynamically
+    const breakTextures = await Promise.all(
+        Array.from({ length: 10 }, (_, i) => loadTexture(`destroy_stage_${i}.png`, 'rgba(0,0,0,0)'))
+    );
 
     const grassMat = new THREE.MeshLambertMaterial({ map: grassTex });
     const dirtMat = new THREE.MeshLambertMaterial({ map: dirtTex });
@@ -131,47 +137,18 @@ window.addEventListener('DOMContentLoaded', async () => {
     const leavesBlockMaterials = [leavesMat, leavesMat, leavesMat, leavesMat, leavesMat, leavesMat];
     const plankBlockMaterials = [planksMat, planksMat, planksMat, planksMat, planksMat, planksMat];
 
-    // ---- Cracking Overlay System Setup ----
-    const crackCanvas = document.createElement('canvas');
-    crackCanvas.width = 64; crackCanvas.height = 64;
-    const crackCtx = crackCanvas.getContext('2d');
-    const crackTexture = new THREE.CanvasTexture(crackCanvas);
-    crackTexture.magFilter = THREE.NearestFilter;
-    
-    // Wire up a single ghost overlay block that moves over whatever block you are mining
-    const crackMat = new THREE.MeshLambertMaterial({ 
-        map: crackTexture, 
-        transparent: true, 
+    // ---- Transparency Fix Overlay System ----
+    const crackMat = new THREE.MeshBasicMaterial({ 
+        map: breakTextures[0], 
+        transparent: true,
+        blending: THREE.NormalBlending, // Switches blending to let alpha layers map transparently
         polygonOffset: true, 
-        polygonOffsetFactor: -1, // Positions overlay slightly above base surfaces to kill z-fighting glitches
-        blending: THREE.MultiplyBlending 
+        polygonOffsetFactor: -4, // Shifts face registration further to eliminate flicker
+        polygonOffsetUnits: -4
     });
-    const crackMesh = new THREE.Mesh(new THREE.BoxGeometry(1.01, 1.01, 1.01), crackMat);
+    const crackMesh = new THREE.Mesh(new THREE.BoxGeometry(1.008, 1.008, 1.008), crackMat);
     crackMesh.visible = false;
     scene.add(crackMesh);
-
-    // Procedural generation of 10 destruction stages
-    function updateCrackTexture(stage) {
-        crackCtx.clearRect(0, 0, 64, 64);
-        if (stage <= 0) { crackTexture.needsUpdate = true; return; }
-        
-        crackCtx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
-        crackCtx.lineWidth = 2;
-        crackCtx.beginPath();
-        
-        const lines = stage * 3;
-        for(let i=0; i<lines; i++) {
-            const seed = i * 4567;
-            const x1 = Math.abs(Math.sin(seed)) * 64;
-            const y1 = Math.abs(Math.cos(seed)) * 64;
-            const x2 = x1 + (Math.sin(seed + 1) * 15);
-            const y2 = y1 + (Math.cos(seed + 2) * 15);
-            crackCtx.moveTo(x1, y1);
-            crackCtx.lineTo(x2, y2);
-        }
-        crackCtx.stroke();
-        crackTexture.needsUpdate = true;
-    }
 
     // ---- Procedural Generation Math ----
     function getNoiseHeight(wx, wz) {
@@ -209,14 +186,12 @@ window.addEventListener('DOMContentLoaded', async () => {
 
         const categorizedPositions = { grass: [], dirt: [], cobblestone: [], log: [], leaves: [], planks: [] };
 
-        // FIX 1: Evaluate well structural chance ONCE per entire chunk wrapper
         const chunkHash = coordHash(cx * 31, cz * 73);
-        const spawnWellInChunk = (chunkHash < 0.05); // Balanced 5% chance per chunk
-        
-        // Pick a coordinate inside the chunk boundaries for the well center point
+        const spawnWellInChunk = (chunkHash < 0.05); 
         const wellCenterX = ox + 4 + Math.floor(chunkHash * 1000) % 8;
         const wellCenterZ = oz + 4 + Math.floor(chunkHash * 2000) % 8;
 
+        // Pass 1: Generate terrain terrain baseline safely
         for (let x = 0; x < CHUNK_SIZE; x++) {
             for (let z = 0; z < CHUNK_SIZE; z++) {
                 const wx = ox + x;
@@ -242,9 +217,9 @@ window.addEventListener('DOMContentLoaded', async () => {
                     }
                 }
 
+                // Pass 2: Structures decoration rules mapping
                 const surfaceKey = `${wx},${surfaceY},${wz}`;
                 if (worldBlocksData.get(surfaceKey) === 'grass') {
-                    // Check if this position matches our singular pre-calculated chunk well location
                     if (spawnWellInChunk && wx === wellCenterX && wz === wellCenterZ) {
                         for (let vx = -2; vx <= 2; vx++) {
                             for (let vz = -2; vz <= 2; vz++) {
@@ -262,7 +237,6 @@ window.addEventListener('DOMContentLoaded', async () => {
                             }
                         }
                     } else {
-                        // Regular flora generation calculations
                         const hash = coordHash(wx, wz);
                         if (hash > 0.05 && hash < 0.07) {
                             const trunkHeight = 4 + Math.floor(hash * 100) % 3;
@@ -287,6 +261,7 @@ window.addEventListener('DOMContentLoaded', async () => {
             }
         }
 
+        // Pass 3: Bind keys and convert block definitions to instance data loops
         worldBlocksData.forEach((type, key) => {
             if (type === 'air') return;
             const [bx, by, bz] = key.split(',').map(Number);
@@ -385,11 +360,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     };
 
     let selectedBlockType = 'grass';
-    
-    // Track current breaking progress state
     let miningTargetKey = null;
     let miningProgress = 0; 
-    const MINING_SPEED = 3.5; // Controls how fast blocks break
+    const MINING_SPEED = 2.2; 
 
     renderer.domElement.addEventListener('click', () => {
         if (document.pointerLockElement !== renderer.domElement) {
@@ -433,7 +406,6 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     function onMouseDown(e) {
         if (e.button === 2) { 
-            // Handle block placement instantly on Right Click
             raycaster.setFromCamera(mouseCenter, camera);
             const intersects = raycaster.intersectObjects(raycastTargets, false);
             if (intersects.length > 0 && intersects[0].distance <= 6) {
@@ -480,7 +452,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
 
     function checkMiningInteraction(dt) {
-        // Evaluate mouse button inputs inside continuous physics check
         if (document.pointerLockElement === renderer.domElement && keys['MouseDown0']) { 
             raycaster.setFromCamera(mouseCenter, camera);
             const intersects = raycaster.intersectObjects(raycastTargets, false);
@@ -494,7 +465,6 @@ window.addEventListener('DOMContentLoaded', async () => {
                 if (targetKey) {
                     const [bx, by, bz] = targetKey.split(',').map(Number);
                     
-                    // If target changed, reset mining metrics
                     if (miningTargetKey !== targetKey) {
                         miningTargetKey = targetKey;
                         miningProgress = 0;
@@ -503,10 +473,12 @@ window.addEventListener('DOMContentLoaded', async () => {
                     }
 
                     miningProgress += dt * MINING_SPEED;
-                    const stage = Math.min(Math.floor(miningProgress * 10), 10);
-                    updateCrackTexture(stage);
+                    
+                    // Maps the timeline 0.0 -> 1.0 down into 0-9 index choices matching file names safely
+                    const textureIdx = Math.min(Math.floor(miningProgress * 10), 9);
+                    crackMat.map = breakTextures[textureIdx];
+                    crackMat.needsUpdate = true;
 
-                    // Block Breaks fully!
                     if (miningProgress >= 1.0) {
                         worldBlocksData.set(targetKey, 'air');
                         miningTargetKey = null;
@@ -529,14 +501,12 @@ window.addEventListener('DOMContentLoaded', async () => {
             }
         }
         
-        // Reset if we stop holding Left Click or look away
         if (miningTargetKey !== null) {
             miningTargetKey = null;
             crackMesh.visible = false;
         }
     }
 
-    // Keep state of mouse button flags
     window.addEventListener('mousedown', e => { if(e.button === 0) keys['MouseDown0'] = true; });
     window.addEventListener('mouseup', e => { if(e.button === 0) keys['MouseDown0'] = false; });
 
@@ -646,12 +616,12 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    // FIX 2: Initialize world chunks and target definitions immediately so generation models are fully destroyable off spawn
-    const initialChunk = createChunk(0, 0);
-    loadedChunks.set("0,0", initialChunk);
-    scene.add(initialChunk);
+    // Explicit compilation pass to ensure all structures register indices prior to physics ticking
+    const spawnX = Math.floor(player.position.x / 16);
+    const spawnZ = Math.floor(player.position.z / 16);
+    updateChunks(spawnX, spawnZ);
     rebuildRaycastTargetsList();
 
     requestAnimationFrame(animate);
-    console.log('Engine Online: Fixes Loaded & Cracking Pipeline Implemented.');
+    console.log('Textures Synchronized. Breaking overlays active.');
 });
