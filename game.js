@@ -192,7 +192,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         const wave1 = Math.sin(wx * 0.045) * Math.cos(wz * 0.045) * 3.5;
         const wave2 = Math.sin(wx * 0.12 + 1.8) * 1.2;
         const wave3 = Math.cos(wz * 0.13 + 2.3) * 1.1;
-        return Math.floor(2 + wave1 + wave2 + wave3);
+        return Math.floor(4 + wave1 + wave2 + wave3); // higher base height to avoid holes
     }
 
     function coordHash(x, z) {
@@ -200,10 +200,12 @@ window.addEventListener('DOMContentLoaded', async () => {
         return Math.abs(val - Math.floor(val));
     }
 
+    // Improved cave check - never removes surface blocks
     function isCaveSpace(wx, wy, wz) {
-        if (wy > getNoiseHeight(wx, wz) - 1) return false; 
+        const surfaceY = getNoiseHeight(wx, wz);
+        if (wy >= surfaceY - 1) return false; // keep surface and near-surface solid
         const caveDensity = Math.sin(wx * 0.22) + Math.cos(wy * 0.25) + Math.sin(wz * 0.22);
-        return caveDensity > 1.25; 
+        return caveDensity > 1.4; // less aggressive caves
     }
 
     // ---- Chunk System ----
@@ -215,6 +217,29 @@ window.addEventListener('DOMContentLoaded', async () => {
     let raycastTargets = []; 
     let lastPlayerCX = null;
     let lastPlayerCZ = null;
+
+    function ensureBlockGenerated(x, y, z) {
+        const key = `${x},${y},${z}`;
+        if (worldBlocksData.has(key)) return worldBlocksData.get(key);
+        const surfaceY = getNoiseHeight(x, z);
+        if (y > surfaceY) {
+            worldBlocksData.set(key, 'air');
+            return 'air';
+        }
+        if (y === surfaceY) {
+            worldBlocksData.set(key, 'grass');
+            return 'grass';
+        } else if (y > surfaceY - 3) {
+            worldBlocksData.set(key, 'dirt');
+            return 'dirt';
+        } else if (y > 0) {
+            worldBlocksData.set(key, 'cobblestone');
+            return 'cobblestone';
+        } else {
+            worldBlocksData.set(key, 'cobblestone');
+            return 'cobblestone';
+        }
+    }
 
     function createChunk(cx, cz) {
         const group = new THREE.Group();
@@ -229,49 +254,51 @@ window.addEventListener('DOMContentLoaded', async () => {
         const wellCenterX = ox + 4 + Math.floor(chunkHash * 1000) % 8;
         const wellCenterZ = oz + 4 + Math.floor(chunkHash * 2000) % 8;
 
+        // First, ensure all blocks in this chunk are generated (no holes)
         for (let x = 0; x < CHUNK_SIZE; x++) {
             for (let z = 0; z < CHUNK_SIZE; z++) {
                 const wx = ox + x;
                 const wz = oz + z;
-                let surfaceY = getNoiseHeight(wx, wz);
-                
-                // FIX: ensure we don't go below y=0
-                for (let wy = Math.max(0, surfaceY - 6); wy <= surfaceY; wy++) {
+                const surfaceY = getNoiseHeight(wx, wz);
+                for (let wy = 0; wy <= surfaceY + 6; wy++) { // generate up to tree height
                     const key = `${wx},${wy},${wz}`;
-                    
                     if (!worldBlocksData.has(key)) {
-                        if (isCaveSpace(wx, wy, wz)) {
+                        if (wy > surfaceY) {
                             worldBlocksData.set(key, 'air');
-                            continue;
-                        }
-
-                        if (wy === surfaceY) {
-                            worldBlocksData.set(key, 'grass');
-                        } else if (wy > surfaceY - 3) {
-                            worldBlocksData.set(key, 'dirt');
+                        } else if (isCaveSpace(wx, wy, wz)) {
+                            worldBlocksData.set(key, 'air');
                         } else {
-                            worldBlocksData.set(key, 'cobblestone');
+                            if (wy === surfaceY) worldBlocksData.set(key, 'grass');
+                            else if (wy > surfaceY - 3) worldBlocksData.set(key, 'dirt');
+                            else worldBlocksData.set(key, 'cobblestone');
                         }
                     }
                 }
+            }
+        }
 
+        // Add trees and structures
+        for (let x = 0; x < CHUNK_SIZE; x++) {
+            for (let z = 0; z < CHUNK_SIZE; z++) {
+                const wx = ox + x;
+                const wz = oz + z;
+                const surfaceY = getNoiseHeight(wx, wz);
                 const surfaceKey = `${wx},${surfaceY},${wz}`;
+                
                 if (worldBlocksData.get(surfaceKey) === 'grass') {
                     if (spawnWellInChunk && wx === wellCenterX && wz === wellCenterZ) {
+                        // spawn well structure (same as before)
                         for (let vx = -2; vx <= 2; vx++) {
                             for (let vz = -2; vz <= 2; vz++) {
                                 const baseKey = `${wx + vx},${surfaceY},${wz + vz}`;
                                 if (!worldBlocksData.has(baseKey)) worldBlocksData.set(baseKey, 'planks'); 
-                                
                                 if (Math.abs(vx) === 2 && Math.abs(vz) === 2) {
-                                    const k1 = `${wx + vx},${surfaceY + 1},${wz + vz}`;
-                                    const k2 = `${wx + vx},${surfaceY + 2},${wz + vz}`;
-                                    const k3 = `${wx + vx},${surfaceY + 3},${wz + vz}`;
-                                    if (!worldBlocksData.has(k1)) worldBlocksData.set(k1, 'cobblestone');
-                                    if (!worldBlocksData.has(k2)) worldBlocksData.set(k2, 'cobblestone');
-                                    if (!worldBlocksData.has(k3)) worldBlocksData.set(k3, 'planks');
+                                    for (let h = 1; h <= 3; h++) {
+                                        const k = `${wx + vx},${surfaceY + h},${wz + vz}`;
+                                        if (!worldBlocksData.has(k)) worldBlocksData.set(k, h === 3 ? 'planks' : 'cobblestone');
+                                    }
                                 }
-                                if (surfaceY > 0 && (Math.abs(vx) <= 2 && Math.abs(vz) <= 2) && (Math.abs(vx) === 2 || Math.abs(vz) === 2)) {
+                                if ((Math.abs(vx) === 2 || Math.abs(vz) === 2) && surfaceY > 0) {
                                     const k4 = `${wx + vx},${surfaceY + 4},${wz + vz}`;
                                     if (!worldBlocksData.has(k4)) worldBlocksData.set(k4, 'planks');
                                 }
@@ -283,9 +310,7 @@ window.addEventListener('DOMContentLoaded', async () => {
                             const trunkHeight = 3 + Math.floor(hash * 100) % 3;
                             for (let th = 1; th <= trunkHeight; th++) {
                                 const logKey = `${wx},${surfaceY + th},${wz}`;
-                                if (!worldBlocksData.has(logKey)) {
-                                    worldBlocksData.set(logKey, 'log');
-                                }
+                                if (!worldBlocksData.has(logKey)) worldBlocksData.set(logKey, 'log');
                             }
                             const leafBase = surfaceY + trunkHeight;
                             for (let lx = -2; lx <= 2; lx++) {
@@ -293,25 +318,23 @@ window.addEventListener('DOMContentLoaded', async () => {
                                     for (let ly = -1; ly <= 2; ly++) {
                                         if (Math.abs(lx) + Math.abs(lz) + Math.abs(ly) > 3) continue; 
                                         const lKey = `${wx + lx},${leafBase + ly},${wz + lz}`;
-                                        if (!worldBlocksData.has(lKey)) {
-                                            worldBlocksData.set(lKey, 'leaves');
-                                        }
+                                        if (!worldBlocksData.has(lKey)) worldBlocksData.set(lKey, 'leaves');
                                     }
                                 }
                             }
-                        } 
+                        }
                     }
                 }
             }
         }
 
+        // Collect positions for rendering
         worldBlocksData.forEach((type, key) => {
             if (type === 'air') return;
             const [bx, by, bz] = key.split(',').map(Number);
             const bcx = Math.floor(bx / CHUNK_SIZE);
             const bcz = Math.floor(bz / CHUNK_SIZE);
-
-            if (bcx === cx && bcz === cz) {
+            if (bcx === cx && bcz === cz && by >= 0 && by < 128) {
                 if (categorizedPositions[type]) {
                     categorizedPositions[type].push({ x: bx + 0.5, y: by + 0.5, z: bz + 0.5, key });
                 }
@@ -343,8 +366,6 @@ window.addEventListener('DOMContentLoaded', async () => {
             });
 
             instMesh.instanceMatrix.needsUpdate = true;
-            // FIX: removed computeBoundingSphere/computeBoundingBox - not needed for InstancedMesh raycasting
-            
             group.add(instMesh);
         });
 
@@ -388,9 +409,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         loadedChunks.forEach((chunk, key) => {
             if (!needed.has(key)) {
                 scene.remove(chunk);
-                chunk.children.forEach(child => { 
-                    if (child.isInstancedMesh) child.dispose(); 
-                });
+                chunk.children.forEach(child => { if (child.isInstancedMesh) child.dispose(); });
                 loadedChunks.delete(key);
                 modified = true;
             }
@@ -401,19 +420,18 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
 
     // ---- Player Physics & Interaction ----
-    // FIX: find a safe spawn height above ground
     function findSafeSpawnHeight(x, z) {
         for(let y = 60; y > 0; y--) {
             const key = `${Math.floor(x)},${y},${Math.floor(z)}`;
             if(worldBlocksData.has(key) && worldBlocksData.get(key) !== 'air') {
-                return y + 2; // stand on top
+                return y + 2;
             }
         }
-        return 30; // fallback
+        return getNoiseHeight(x, z) + 3;
     }
 
     const player = {
-        position: new THREE.Vector3(0, 30, 0), // temp, will be adjusted after world loads
+        position: new THREE.Vector3(0, 30, 0),
         velocity: new THREE.Vector3(),
         onGround: false,
         yaw: 0,
@@ -467,7 +485,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     function onMouseDown(e) {
         if (e.button === 2) { 
-            e.preventDefault(); // FIX: prevent context menu
+            e.preventDefault();
             raycaster.setFromCamera(mouseCenter, camera);
             const intersects = raycaster.intersectObjects(raycastTargets, false);
             if (intersects.length > 0 && intersects[0].distance <= 7) {
@@ -505,7 +523,6 @@ window.addEventListener('DOMContentLoaded', async () => {
                         const oldChunk = loadedChunks.get(targetChunkKey);
                         scene.remove(oldChunk);
                         oldChunk.children.forEach(child => { if (child.isInstancedMesh) child.dispose(); });
-                        
                         const freshChunk = createChunk(pcx, pcz);
                         loadedChunks.set(targetChunkKey, freshChunk);
                         scene.add(freshChunk);
@@ -538,7 +555,6 @@ window.addEventListener('DOMContentLoaded', async () => {
                     }
 
                     miningProgress += dt * MINING_SPEED;
-                    
                     const textureIdx = Math.min(Math.floor(miningProgress * 10), 9);
                     crackMat.map = breakTextures[textureIdx];
                     crackMat.needsUpdate = true;
@@ -556,7 +572,6 @@ window.addEventListener('DOMContentLoaded', async () => {
                             const oldChunk = loadedChunks.get(chunkKey);
                             scene.remove(oldChunk);
                             oldChunk.children.forEach(child => { if (child.isInstancedMesh) child.dispose(); });
-
                             const freshChunk = createChunk(cx, cz);
                             loadedChunks.set(chunkKey, freshChunk);
                             scene.add(freshChunk);
@@ -574,7 +589,6 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    // FIX: proper mouse button handling with preventDefault
     window.addEventListener('mousedown', e => { 
         if(e.button === 0 && document.pointerLockElement === renderer.domElement) { 
             keys['MouseDown0'] = true; 
@@ -582,14 +596,13 @@ window.addEventListener('DOMContentLoaded', async () => {
         } 
     });
     window.addEventListener('mouseup', e => { if(e.button === 0) keys['MouseDown0'] = false; });
-    window.addEventListener('contextmenu', e => e.preventDefault()); // FIX: global context menu prevention
+    window.addEventListener('contextmenu', e => e.preventDefault());
 
     function isSolid(wx, wy, wz) {
         const key = `${wx},${wy},${wz}`;
         if (worldBlocksData.has(key)) return worldBlocksData.get(key) !== 'air';
         if (wy <= 0) return true;
-        if (isCaveSpace(wx, wy, wz)) return false; 
-        return wy <= getNoiseHeight(wx, wz); 
+        return wy <= getNoiseHeight(wx, wz);
     }
 
     function collides(pos) {
@@ -691,15 +704,17 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    // Initial spawn: load chunks around origin, then adjust player height
+    // Initial world generation and spawn
     const spawnX = 0;
     const spawnZ = 0;
     updateChunks(Math.floor(spawnX / CHUNK_SIZE), Math.floor(spawnZ / CHUNK_SIZE));
     rebuildRaycastTargetsList();
     
-    // After first chunks are generated, set player to safe height
-    const safeY = findSafeSpawnHeight(spawnX, spawnZ);
-    player.position.set(spawnX, safeY, spawnZ);
+    // Wait one frame for chunks to be fully populated, then set safe height
+    setTimeout(() => {
+        const safeY = findSafeSpawnHeight(spawnX, spawnZ);
+        player.position.set(spawnX, safeY, spawnZ);
+    }, 100);
     
     requestAnimationFrame(animate);
 });
