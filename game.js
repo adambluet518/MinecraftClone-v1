@@ -47,9 +47,9 @@ window.addEventListener('DOMContentLoaded', async () => {
         uiMusic.addEventListener('click', () => {
             if (musicPlaying) {
                 music.pause();
-                setHTML(uiMusic, '🔊');
+                setHTML(uiMusic, '🔇');
             } else {
-                music.play().then(() => setHTML(uiMusic, '🎵')).catch(() => setHTML(uiMusic, '❌'));
+                music.play().then(() => setHTML(uiMusic, '🔊')).catch(() => setHTML(uiMusic, '🚫'));
             }
             musicPlaying = !musicPlaying;
         });
@@ -58,18 +58,12 @@ window.addEventListener('DOMContentLoaded', async () => {
     // ---- Three.js Setup ----
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x87CEEB);
-    scene.fog = new THREE.Fog(0x87CEEB, 30, 90); 
+    scene.fog = new THREE.Fog(0x87CEEB, 40, 100); 
 
-    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 200);
-    const renderer = new THREE.WebGLRenderer({ antialias: false }); 
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 250);
+    const renderer = new THREE.WebGLRenderer({ antialias: true }); 
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); 
-    
-    // FIX 1: Pin the canvas style to the viewport background so it doesn't get pushed down
-    renderer.domElement.style.position = 'fixed';
-    renderer.domElement.style.top = '0';
-    renderer.domElement.style.left = '0';
-    renderer.domElement.style.zIndex = '-1'; // Keeps it behind your text UI elements
     document.body.appendChild(renderer.domElement);
 
     window.addEventListener('resize', () => {
@@ -78,11 +72,17 @@ window.addEventListener('DOMContentLoaded', async () => {
         renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
-    const ambientLight = new THREE.AmbientLight(0x909090);
+    const ambientLight = new THREE.AmbientLight(0x7c8c9e);
     scene.add(ambientLight);
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
-    dirLight.position.set(10, 20, 7);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.85);
+    dirLight.position.set(10, 25, 5);
+    dirLight.castShadow = true;
+    dirLight.receiveShadow = false;
     scene.add(dirLight);
+    
+    const backLight = new THREE.DirectionalLight(0x88aacc, 0.3);
+    backLight.position.set(-5, 10, -8);
+    scene.add(backLight);
 
     // ---- Textures Loader & Fallbacks ----
     const textureLoader = new THREE.TextureLoader();
@@ -164,7 +164,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     const leavesMat = new THREE.MeshLambertMaterial({ 
         map: leavesTex, 
         transparent: true, 
-        alphaTest: 0.5,
+        alphaTest: 0.3,
         side: THREE.DoubleSide
     });
 
@@ -183,15 +183,16 @@ window.addEventListener('DOMContentLoaded', async () => {
         polygonOffsetFactor: -4, 
         polygonOffsetUnits: -4
     });
-    const crackMesh = new THREE.Mesh(new THREE.BoxGeometry(1.008, 1.008, 1.008), crackMat);
+    const crackMesh = new THREE.Mesh(new THREE.BoxGeometry(1.01, 1.01, 1.01), crackMat);
     crackMesh.visible = false;
     scene.add(crackMesh);
 
     // ---- Procedural Generation Math ----
     function getNoiseHeight(wx, wz) {
-        const wave1 = Math.sin(wx * 0.05) * Math.cos(wz * 0.05) * 4;
-        const wave2 = Math.sin(wx * 0.15 + 2) * 1.5;
-        return Math.floor(wave1 + wave2);
+        const wave1 = Math.sin(wx * 0.045) * Math.cos(wz * 0.045) * 3.5;
+        const wave2 = Math.sin(wx * 0.12 + 1.8) * 1.2;
+        const wave3 = Math.cos(wz * 0.13 + 2.3) * 1.1;
+        return Math.floor(2 + wave1 + wave2 + wave3);
     }
 
     function coordHash(x, z) {
@@ -200,14 +201,14 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
 
     function isCaveSpace(wx, wy, wz) {
-        if (wy > getNoiseHeight(wx, wz) - 2) return false; 
-        const caveDensity = Math.sin(wx * 0.2) + Math.cos(wy * 0.2) + Math.sin(wz * 0.2);
-        return caveDensity > 1.3; 
+        if (wy > getNoiseHeight(wx, wz) - 1) return false; 
+        const caveDensity = Math.sin(wx * 0.22) + Math.cos(wy * 0.25) + Math.sin(wz * 0.22);
+        return caveDensity > 1.25; 
     }
 
     // ---- Chunk System ----
     const CHUNK_SIZE = 16;
-    const RENDER_DIST = 3;
+    const RENDER_DIST = 4;
     const loadedChunks = new Map();
     const blockGeom = new THREE.BoxGeometry(1, 1, 1);
     const worldBlocksData = new Map();
@@ -224,7 +225,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         const categorizedPositions = { grass: [], dirt: [], cobblestone: [], log: [], leaves: [], planks: [] };
 
         const chunkHash = coordHash(cx * 31, cz * 73);
-        const spawnWellInChunk = (chunkHash < 0.05); 
+        const spawnWellInChunk = (chunkHash < 0.04); 
         const wellCenterX = ox + 4 + Math.floor(chunkHash * 1000) % 8;
         const wellCenterZ = oz + 4 + Math.floor(chunkHash * 2000) % 8;
 
@@ -232,9 +233,9 @@ window.addEventListener('DOMContentLoaded', async () => {
             for (let z = 0; z < CHUNK_SIZE; z++) {
                 const wx = ox + x;
                 const wz = oz + z;
-                const surfaceY = getNoiseHeight(wx, wz);
+                let surfaceY = getNoiseHeight(wx, wz);
                 
-                for (let wy = surfaceY - 6; wy <= surfaceY; wy++) {
+                for (let wy = Math.max(0, surfaceY - 6); wy <= surfaceY; wy++) {
                     const key = `${wx},${wy},${wz}`;
                     
                     if (!worldBlocksData.has(key)) {
@@ -247,6 +248,8 @@ window.addEventListener('DOMContentLoaded', async () => {
                             worldBlocksData.set(key, 'grass');
                         } else if (wy > surfaceY - 3) {
                             worldBlocksData.set(key, 'dirt');
+                        } else if (wy > 0) {
+                            worldBlocksData.set(key, 'cobblestone');
                         } else {
                             worldBlocksData.set(key, 'cobblestone');
                         }
@@ -278,7 +281,7 @@ window.addEventListener('DOMContentLoaded', async () => {
                     } else {
                         const hash = coordHash(wx, wz);
                         if (hash > 0.05 && hash < 0.07) {
-                            const trunkHeight = 4 + Math.floor(hash * 100) % 3;
+                            const trunkHeight = 3 + Math.floor(hash * 100) % 3;
                             for (let th = 1; th <= trunkHeight; th++) {
                                 const logKey = `${wx},${surfaceY + th},${wz}`;
                                 if (!worldBlocksData.has(logKey)) {
@@ -303,23 +306,18 @@ window.addEventListener('DOMContentLoaded', async () => {
             }
         }
 
-        // FIX 3: Massive optimization! Instead of scanning the entire world database map (O(N)), 
-        // just read the 16x16 column block bounds for this specific chunk.
-        for (let x = 0; x < CHUNK_SIZE; x++) {
-            for (let z = 0; z < CHUNK_SIZE; z++) {
-                const wx = ox + x;
-                const wz = oz + z;
-                for (let wy = -64; wy <= 128; wy++) { // Scans standard Minecraft height limits
-                    const key = `${wx},${wy},${wz}`;
-                    const type = worldBlocksData.get(key);
-                    if (type && type !== 'air') {
-                        if (categorizedPositions[type]) {
-                            categorizedPositions[type].push({ x: wx + 0.5, y: wy + 0.5, z: wz + 0.5, key });
-                        }
-                    }
+        worldBlocksData.forEach((type, key) => {
+            if (type === 'air') return;
+            const [bx, by, bz] = key.split(',').map(Number);
+            const bcx = Math.floor(bx / CHUNK_SIZE);
+            const bcz = Math.floor(bz / CHUNK_SIZE);
+
+            if (bcx === cx && bcz === cz) {
+                if (categorizedPositions[type]) {
+                    categorizedPositions[type].push({ x: bx + 0.5, y: by + 0.5, z: bz + 0.5, key });
                 }
             }
-        }
+        });
 
         const dummy = new THREE.Object3D();
         Object.keys(categorizedPositions).forEach(type => {
@@ -335,6 +333,8 @@ window.addEventListener('DOMContentLoaded', async () => {
 
             const instMesh = new THREE.InstancedMesh(blockGeom, mats, blocks.length);
             instMesh.userData = { blockKeys: [] };
+            instMesh.castShadow = true;
+            instMesh.receiveShadow = false;
 
             blocks.forEach((block, idx) => {
                 dummy.position.set(block.x, block.y, block.z);
@@ -344,7 +344,7 @@ window.addEventListener('DOMContentLoaded', async () => {
             });
 
             instMesh.instanceMatrix.needsUpdate = true;
-            instMesh.computeBoundingSphere(); 
+            instMesh.computeBoundingSphere();
             instMesh.computeBoundingBox();
             
             group.add(instMesh);
@@ -390,8 +390,9 @@ window.addEventListener('DOMContentLoaded', async () => {
         loadedChunks.forEach((chunk, key) => {
             if (!needed.has(key)) {
                 scene.remove(chunk);
-                // FIX 2: Meshes do not have .dispose(). Dispose their geometries instead!
-                chunk.children.forEach(child => { if (child.isInstancedMesh) child.geometry.dispose(); });
+                chunk.children.forEach(child => { 
+                    if (child.isInstancedMesh) child.dispose(); 
+                });
                 loadedChunks.delete(key);
                 modified = true;
             }
@@ -403,7 +404,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     // ---- Player Physics & Interaction ----
     const player = {
-        position: new THREE.Vector3(0, getNoiseHeight(0, 0) + 4, 0),
+        position: new THREE.Vector3(0, getNoiseHeight(0, 0) + 3, 0),
         velocity: new THREE.Vector3(),
         onGround: false,
         yaw: 0,
@@ -413,7 +414,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     let selectedBlockType = 'grass';
     let miningTargetKey = null;
     let miningProgress = 0; 
-    const MINING_SPEED = 2.2; 
+    const MINING_SPEED = 2.0; 
 
     renderer.domElement.addEventListener('click', () => {
         if (document.pointerLockElement !== renderer.domElement) {
@@ -436,7 +437,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     function onMouseMove(e) {
         player.yaw -= e.movementX * 0.002;
         player.pitch -= e.movementY * 0.002;
-        player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
+        player.pitch = Math.max(-1.4, Math.min(1.4, player.pitch));
     }
 
     const keys = {};
@@ -447,7 +448,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         if (e.code === 'Digit2') { selectedBlockType = 'dirt'; invHUD.textContent = 'Selected: [2] Dirt Block'; }
         if (e.code === 'Digit3') { selectedBlockType = 'cobblestone'; invHUD.textContent = 'Selected: [3] Cobblestone'; }
         if (e.code === 'Digit4') { selectedBlockType = 'log'; invHUD.textContent = 'Selected: [4] Wood Log'; }
-        if (e.code === 'Digit5') { selectedBlockType = 'leaves'; invHUD.textContent = 'Selected: [5] Leaf Leaves'; }
+        if (e.code === 'Digit5') { selectedBlockType = 'leaves'; invHUD.textContent = 'Selected: [5] Leaves'; }
         if (e.code === 'Digit6') { selectedBlockType = 'planks'; invHUD.textContent = 'Selected: [6] Wood Planks'; }
     });
     window.addEventListener('keyup', e => { keys[e.code] = false; });
@@ -457,9 +458,10 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     function onMouseDown(e) {
         if (e.button === 2) { 
+            e.preventDefault();
             raycaster.setFromCamera(mouseCenter, camera);
             const intersects = raycaster.intersectObjects(raycastTargets, false);
-            if (intersects.length > 0 && intersects[0].distance <= 6) {
+            if (intersects.length > 0 && intersects[0].distance <= 7) {
                 const hit = intersects[0];
                 const hitMesh = hit.object;
                 const instanceId = hit.instanceId;
@@ -493,8 +495,7 @@ window.addEventListener('DOMContentLoaded', async () => {
                     if (loadedChunks.has(targetChunkKey)) {
                         const oldChunk = loadedChunks.get(targetChunkKey);
                         scene.remove(oldChunk);
-                        // FIX 2b: Changed child.dispose() to child.geometry.dispose()
-                        oldChunk.children.forEach(child => { if (child.isInstancedMesh) child.geometry.dispose(); });
+                        oldChunk.children.forEach(child => { if (child.isInstancedMesh) child.dispose(); });
                         
                         const freshChunk = createChunk(pcx, pcz);
                         loadedChunks.set(targetChunkKey, freshChunk);
@@ -545,8 +546,7 @@ window.addEventListener('DOMContentLoaded', async () => {
                         if (loadedChunks.has(chunkKey)) {
                             const oldChunk = loadedChunks.get(chunkKey);
                             scene.remove(oldChunk);
-                            // FIX 2c: Changed child.dispose() to child.geometry.dispose()
-                            oldChunk.children.forEach(child => { if (child.isInstancedMesh) child.geometry.dispose(); });
+                            oldChunk.children.forEach(child => { if (child.isInstancedMesh) child.dispose(); });
 
                             const freshChunk = createChunk(cx, cz);
                             loadedChunks.set(chunkKey, freshChunk);
@@ -565,21 +565,23 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    window.addEventListener('mousedown', e => { if(e.button === 0) keys['MouseDown0'] = true; });
+    window.addEventListener('mousedown', e => { if(e.button === 0) { keys['MouseDown0'] = true; e.preventDefault(); } });
     window.addEventListener('mouseup', e => { if(e.button === 0) keys['MouseDown0'] = false; });
+    window.addEventListener('contextmenu', e => e.preventDefault());
 
     function isSolid(wx, wy, wz) {
         const key = `${wx},${wy},${wz}`;
         if (worldBlocksData.has(key)) return worldBlocksData.get(key) !== 'air';
+        if (wy <= 0) return true;
         if (isCaveSpace(wx, wy, wz)) return false; 
         return wy <= getNoiseHeight(wx, wz); 
     }
 
     function collides(pos) {
         const hw = 0.3;
-        for (let dx = -hw; dx <= hw; dx += 0.59) {
-            for (let dy = 0; dy <= 1.6; dy += 0.79) {
-                for (let dz = -hw; dz <= hw; dz += 0.59) {
+        for (let dx = -hw; dx <= hw; dx += 0.6) {
+            for (let dy = 0; dy <= 1.6; dy += 0.8) {
+                for (let dz = -hw; dz <= hw; dz += 0.6) {
                     const bx = Math.floor(pos.x + dx);
                     const by = Math.floor(pos.y + dy);
                     const bz = Math.floor(pos.z + dz);
@@ -601,7 +603,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         if (moveDir.lengthSq() > 0) moveDir.normalize();
 
         const sprint = keys['ShiftLeft'] || keys['ShiftRight'];
-        const speed = sprint ? 9 : 5.5;
+        const speed = sprint ? 8.5 : 5.2;
 
         const fwd = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), player.yaw);
         const rgt = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), player.yaw);
@@ -610,12 +612,12 @@ window.addEventListener('DOMContentLoaded', async () => {
         player.velocity.z = (fwd.z * moveDir.z + rgt.z * moveDir.x) * speed;
 
         if (keys['Space'] && player.onGround) {
-            player.velocity.y = 8.5;
+            player.velocity.y = 8.2;
             player.onGround = false;
         }
 
-        player.velocity.y -= 22 * dt;
-        if (player.velocity.y < -30) player.velocity.y = -30;
+        player.velocity.y -= 24 * dt;
+        if (player.velocity.y < -35) player.velocity.y = -35;
 
         const newPos = player.position.clone();
         
@@ -628,7 +630,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         newPos.y += player.velocity.y * dt;
         if (collides(newPos)) {
             if (player.velocity.y < 0) {
-                newPos.y = Math.floor(newPos.y) + 1 + 0.001; 
+                newPos.y = Math.floor(newPos.y) + 1; 
                 player.onGround = true;
             } else {
                 newPos.y = Math.floor(player.position.y) - 0.001; 
@@ -639,17 +641,17 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
         player.position.copy(newPos);
 
-        camera.position.set(player.position.x, player.position.y + 1.4, player.position.z);
+        camera.position.set(player.position.x, player.position.y + 1.45, player.position.z);
         const look = new THREE.Vector3(0, 0, -1);
         look.applyAxisAngle(new THREE.Vector3(1, 0, 0), player.pitch);
         look.applyAxisAngle(new THREE.Vector3(0, 1, 0), player.yaw);
         camera.lookAt(camera.position.clone().add(look));
 
-        const pcx = Math.floor(player.position.x / 16);
-        const pcz = Math.floor(player.position.z / 16);
+        const pcx = Math.floor(player.position.x / CHUNK_SIZE);
+        const pcz = Math.floor(player.position.z / CHUNK_SIZE);
         updateChunks(pcx, pcz);
 
-        setHTML(uiPos, `${Math.round(player.position.x)}, ${Math.round(player.position.y)}, ${Math.round(player.position.z)}`);
+        setHTML(uiPos, `${Math.floor(player.position.x)}, ${Math.floor(player.position.y)}, ${Math.floor(player.position.z)}`);
     }
 
     // ---- Game Loop ----
@@ -674,8 +676,8 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    const spawnX = Math.floor(player.position.x / 16);
-    const spawnZ = Math.floor(player.position.z / 16);
+    const spawnX = Math.floor(player.position.x / CHUNK_SIZE);
+    const spawnZ = Math.floor(player.position.z / CHUNK_SIZE);
     updateChunks(spawnX, spawnZ);
     rebuildRaycastTargetsList();
 
