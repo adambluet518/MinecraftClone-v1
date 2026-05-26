@@ -3,28 +3,81 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Infinite Voxel World</title>
+    <title>MiniCraft - Web Voxel Game</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div id="hud">
-        <span>⛏ Infinite Procedural World</span><br>
-        <span>Pos: <span id="posDisplay">0, 0, 0</span></span><br>
-        <span>Chunks: <span id="chunkCount">0</span></span><br>
-        <span>FPS: <span id="fpsDisplay">0</span></span>
-    </div>
-    <button id="musicToggle" title="Toggle Music">🔊</button>
+    <!-- Audio Element for Background Music -->
+    <audio id="bg-music" loop preload="auto">
+        <source src="music.mp3" type="audio/mpeg">
+    </audio>
 
-    <!-- Three.js from CDN -->
+    <!-- Game Canvas Container -->
+    <div id="game-container">
+        <canvas id="game-canvas"></canvas>
+    </div>
+
+    <!-- Crosshair -->
+    <div id="crosshair">
+        <div class="crosshair-line crosshair-h"></div>
+        <div class="crosshair-line crosshair-v"></div>
+        <div class="crosshair-dot"></div>
+    </div>
+
+    <!-- Hotbar -->
+    <div id="hotbar">
+        <div class="hotbar-slot" data-block="1" data-name="Grass">
+            <canvas class="hotbar-preview" width="40" height="40"></canvas>
+            <span class="hotbar-label">1</span>
+        </div>
+        <div class="hotbar-slot" data-block="2" data-name="Dirt">
+            <canvas class="hotbar-preview" width="40" height="40"></canvas>
+            <span class="hotbar-label">2</span>
+        </div>
+        <div class="hotbar-slot selected" data-block="3" data-name="Stone">
+            <canvas class="hotbar-preview" width="40" height="40"></canvas>
+            <span class="hotbar-label">3</span>
+        </div>
+        <div class="hotbar-slot" data-block="4" data-name="Log">
+            <canvas class="hotbar-preview" width="40" height="40"></canvas>
+            <span class="hotbar-label">4</span>
+        </div>
+        <div class="hotbar-slot" data-block="5" data-name="Leaves">
+            <canvas class="hotbar-preview" width="40" height="40"></canvas>
+            <span class="hotbar-label">5</span>
+        </div>
+        <div class="hotbar-slot" data-block="6" data-name="Planks">
+            <canvas class="hotbar-preview" width="40" height="40"></canvas>
+            <span class="hotbar-label">6</span>
+        </div>
+    </div>
+
+    <!-- Block name tooltip -->
+    <div id="block-name">Stone</div>
+
+    <!-- Instructions overlay -->
+    <div id="instructions">
+        <h2>🎮 MiniCraft Controls</h2>
+        <p><b>WASD</b> - Move &nbsp;|&nbsp; <b>Space</b> - Jump &nbsp;|&nbsp; <b>Mouse</b> - Look Around</p>
+        <p><b>Left Click</b> - Mine Block &nbsp;|&nbsp; <b>Right Click</b> - Place Block</p>
+        <p><b>1-6</b> or <b>Scroll</b> - Select Block &nbsp;|&nbsp; <b>M</b> - Toggle Music</p>
+        <p><b>ESC</b> - Release Cursor</p>
+        <p class="click-to-start">Click anywhere to start playing!</p>
+    </div>
+
+    <!-- Music toggle button -->
+    <button id="music-toggle" title="Toggle Music">🔇</button>
+
+    <!-- Three.js Import Map -->
     <script type="importmap">
         {
             "imports": {
-                "three": "https://unpkg.com/three@0.128.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.128.0/examples/jsm/"
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
             }
         }
     </script>
 
+    <!-- Game Script -->
     <script type="module" src="game.js"></script>
 </body>
 </html>
