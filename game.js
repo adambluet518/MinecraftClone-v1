@@ -47,9 +47,9 @@ window.addEventListener('DOMContentLoaded', async () => {
         uiMusic.addEventListener('click', () => {
             if (musicPlaying) {
                 music.pause();
-                setHTML(uiMusic, '🔇');
+                setHTML(uiMusic, '🔊');
             } else {
-                music.play().then(() => setHTML(uiMusic, '🔊')).catch(() => setHTML(uiMusic, '🚫'));
+                music.play().then(() => setHTML(uiMusic, '🎵')).catch(() => setHTML(uiMusic, '❌'));
             }
             musicPlaying = !musicPlaying;
         });
@@ -64,6 +64,12 @@ window.addEventListener('DOMContentLoaded', async () => {
     const renderer = new THREE.WebGLRenderer({ antialias: false }); 
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); 
+    
+    // FIX 1: Pin the canvas style to the viewport background so it doesn't get pushed down
+    renderer.domElement.style.position = 'fixed';
+    renderer.domElement.style.top = '0';
+    renderer.domElement.style.left = '0';
+    renderer.domElement.style.zIndex = '-1'; // Keeps it behind your text UI elements
     document.body.appendChild(renderer.domElement);
 
     window.addEventListener('resize', () => {
@@ -155,7 +161,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     const logTopMat = new THREE.MeshLambertMaterial({ map: logTopTex });
     const planksMat = new THREE.MeshLambertMaterial({ map: planksTex });
     
-    // FIX 1: Leaves must allow raycasts to pass through the transparent gaps to hit logs
     const leavesMat = new THREE.MeshLambertMaterial({ 
         map: leavesTex, 
         transparent: true, 
@@ -298,18 +303,23 @@ window.addEventListener('DOMContentLoaded', async () => {
             }
         }
 
-        worldBlocksData.forEach((type, key) => {
-            if (type === 'air') return;
-            const [bx, by, bz] = key.split(',').map(Number);
-            const bcx = Math.floor(bx / CHUNK_SIZE);
-            const bcz = Math.floor(bz / CHUNK_SIZE);
-
-            if (bcx === cx && bcz === cz) {
-                if (categorizedPositions[type]) {
-                    categorizedPositions[type].push({ x: bx + 0.5, y: by + 0.5, z: bz + 0.5, key });
+        // FIX 3: Massive optimization! Instead of scanning the entire world database map (O(N)), 
+        // just read the 16x16 column block bounds for this specific chunk.
+        for (let x = 0; x < CHUNK_SIZE; x++) {
+            for (let z = 0; z < CHUNK_SIZE; z++) {
+                const wx = ox + x;
+                const wz = oz + z;
+                for (let wy = -64; wy <= 128; wy++) { // Scans standard Minecraft height limits
+                    const key = `${wx},${wy},${wz}`;
+                    const type = worldBlocksData.get(key);
+                    if (type && type !== 'air') {
+                        if (categorizedPositions[type]) {
+                            categorizedPositions[type].push({ x: wx + 0.5, y: wy + 0.5, z: wz + 0.5, key });
+                        }
+                    }
                 }
             }
-        });
+        }
 
         const dummy = new THREE.Object3D();
         Object.keys(categorizedPositions).forEach(type => {
@@ -334,7 +344,7 @@ window.addEventListener('DOMContentLoaded', async () => {
             });
 
             instMesh.instanceMatrix.needsUpdate = true;
-            instMesh.computeBoundingSphere(); // FIX 2: Compute spheres for flawless raycasting
+            instMesh.computeBoundingSphere(); 
             instMesh.computeBoundingBox();
             
             group.add(instMesh);
@@ -380,8 +390,8 @@ window.addEventListener('DOMContentLoaded', async () => {
         loadedChunks.forEach((chunk, key) => {
             if (!needed.has(key)) {
                 scene.remove(chunk);
-                // FIX 3: Fully dispose geometries to purge zombie meshes stopping raycasts
-                chunk.children.forEach(child => { if (child.isInstancedMesh) child.dispose(); });
+                // FIX 2: Meshes do not have .dispose(). Dispose their geometries instead!
+                chunk.children.forEach(child => { if (child.isInstancedMesh) child.geometry.dispose(); });
                 loadedChunks.delete(key);
                 modified = true;
             }
@@ -483,7 +493,8 @@ window.addEventListener('DOMContentLoaded', async () => {
                     if (loadedChunks.has(targetChunkKey)) {
                         const oldChunk = loadedChunks.get(targetChunkKey);
                         scene.remove(oldChunk);
-                        oldChunk.children.forEach(child => { if (child.isInstancedMesh) child.dispose(); });
+                        // FIX 2b: Changed child.dispose() to child.geometry.dispose()
+                        oldChunk.children.forEach(child => { if (child.isInstancedMesh) child.geometry.dispose(); });
                         
                         const freshChunk = createChunk(pcx, pcz);
                         loadedChunks.set(targetChunkKey, freshChunk);
@@ -534,8 +545,8 @@ window.addEventListener('DOMContentLoaded', async () => {
                         if (loadedChunks.has(chunkKey)) {
                             const oldChunk = loadedChunks.get(chunkKey);
                             scene.remove(oldChunk);
-                            // Purge the old log mesh permanently so it can't accidentally catch raycasts
-                            oldChunk.children.forEach(child => { if (child.isInstancedMesh) child.dispose(); });
+                            // FIX 2c: Changed child.dispose() to child.geometry.dispose()
+                            oldChunk.children.forEach(child => { if (child.isInstancedMesh) child.geometry.dispose(); });
 
                             const freshChunk = createChunk(cx, cz);
                             loadedChunks.set(chunkKey, freshChunk);
