@@ -78,8 +78,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     dirLight.position.set(10, 20, 7);
     scene.add(dirLight);
 
-    // ---- Textures Loader ----
+    // ---- Textures Loader & Fallbacks ----
     const textureLoader = new THREE.TextureLoader();
+    
     function createFallbackTexture(color) {
         const canvas = document.createElement('canvas');
         canvas.width = 16; canvas.height = 16;
@@ -91,7 +92,35 @@ window.addEventListener('DOMContentLoaded', async () => {
         return tex;
     }
 
-    function loadTexture(filename, fallbackColor) {
+    // Smart Fallback: Procedurally draws a crack line if your uploaded PNGs get blocked by the server
+    function createCrackFallback(stage) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 64; canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, 64, 64);
+        if (stage <= 0) return new THREE.CanvasTexture(canvas);
+        
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        const lines = stage * 3;
+        for(let i = 0; i < lines; i++) {
+            const seed = i * 4567;
+            const x1 = Math.abs(Math.sin(seed)) * 64;
+            const y1 = Math.abs(Math.cos(seed)) * 64;
+            const x2 = x1 + (Math.sin(seed + 1) * 20);
+            const y2 = y1 + (Math.cos(seed + 2) * 20);
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+        }
+        ctx.stroke();
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.magFilter = THREE.NearestFilter;
+        tex.minFilter = THREE.NearestFilter;
+        return tex;
+    }
+
+    function loadTexture(filename, fallback) {
         return new Promise((resolve) => {
             textureLoader.load(
                 filename,
@@ -101,7 +130,7 @@ window.addEventListener('DOMContentLoaded', async () => {
                     resolve(tex);
                 },
                 undefined,
-                () => resolve(createFallbackTexture(fallbackColor))
+                () => resolve(typeof fallback === 'string' ? createFallbackTexture(fallback) : fallback)
             );
         });
     }
@@ -117,9 +146,9 @@ window.addEventListener('DOMContentLoaded', async () => {
         loadTexture('planks.png', '#a0522d')
     ]);
 
-    // Loads destroy_stage_0.png through destroy_stage_9.png dynamically
+    // Loads your destroy stages. Uses the drawn fallback if the file gets blocked.
     const breakTextures = await Promise.all(
-        Array.from({ length: 10 }, (_, i) => loadTexture(`destroy_stage_${i}.png`, 'rgba(0,0,0,0)'))
+        Array.from({ length: 10 }, (_, i) => loadTexture(`destroy_stage_${i}.png`, createCrackFallback(i)))
     );
 
     const grassMat = new THREE.MeshLambertMaterial({ map: grassTex });
@@ -141,9 +170,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     const crackMat = new THREE.MeshBasicMaterial({ 
         map: breakTextures[0], 
         transparent: true,
-        blending: THREE.NormalBlending, // Switches blending to let alpha layers map transparently
+        alphaTest: 0.1, // Purges tiny transparency artifacts to prevent black squares
         polygonOffset: true, 
-        polygonOffsetFactor: -4, // Shifts face registration further to eliminate flicker
+        polygonOffsetFactor: -4, 
         polygonOffsetUnits: -4
     });
     const crackMesh = new THREE.Mesh(new THREE.BoxGeometry(1.008, 1.008, 1.008), crackMat);
@@ -191,7 +220,6 @@ window.addEventListener('DOMContentLoaded', async () => {
         const wellCenterX = ox + 4 + Math.floor(chunkHash * 1000) % 8;
         const wellCenterZ = oz + 4 + Math.floor(chunkHash * 2000) % 8;
 
-        // Pass 1: Generate terrain terrain baseline safely
         for (let x = 0; x < CHUNK_SIZE; x++) {
             for (let z = 0; z < CHUNK_SIZE; z++) {
                 const wx = ox + x;
@@ -217,22 +245,27 @@ window.addEventListener('DOMContentLoaded', async () => {
                     }
                 }
 
-                // Pass 2: Structures decoration rules mapping
+                // Structures Generation
                 const surfaceKey = `${wx},${surfaceY},${wz}`;
                 if (worldBlocksData.get(surfaceKey) === 'grass') {
                     if (spawnWellInChunk && wx === wellCenterX && wz === wellCenterZ) {
                         for (let vx = -2; vx <= 2; vx++) {
                             for (let vz = -2; vz <= 2; vz++) {
                                 const baseKey = `${wx + vx},${surfaceY},${wz + vz}`;
-                                worldBlocksData.set(baseKey, 'planks'); 
+                                // FIX: Protect all structures from overwriting player actions
+                                if (!worldBlocksData.has(baseKey)) worldBlocksData.set(baseKey, 'planks'); 
                                 
                                 if (Math.abs(vx) === 2 && Math.abs(vz) === 2) {
-                                    worldBlocksData.set(`${wx + vx},${surfaceY + 1},${wz + vz}`, 'cobblestone');
-                                    worldBlocksData.set(`${wx + vx},${surfaceY + 2},${wz + vz}`, 'cobblestone');
-                                    worldBlocksData.set(`${wx + vx},${surfaceY + 3},${wz + vz}`, 'planks');
+                                    const k1 = `${wx + vx},${surfaceY + 1},${wz + vz}`;
+                                    const k2 = `${wx + vx},${surfaceY + 2},${wz + vz}`;
+                                    const k3 = `${wx + vx},${surfaceY + 3},${wz + vz}`;
+                                    if (!worldBlocksData.has(k1)) worldBlocksData.set(k1, 'cobblestone');
+                                    if (!worldBlocksData.has(k2)) worldBlocksData.set(k2, 'cobblestone');
+                                    if (!worldBlocksData.has(k3)) worldBlocksData.set(k3, 'planks');
                                 }
                                 if (surfaceY > 0 && (Math.abs(vx) <= 2 && Math.abs(vz) <= 2) && (Math.abs(vx) === 2 || Math.abs(vz) === 2)) {
-                                    worldBlocksData.set(`${wx + vx},${surfaceY + 4},${wz + vz}`, 'planks');
+                                    const k4 = `${wx + vx},${surfaceY + 4},${wz + vz}`;
+                                    if (!worldBlocksData.has(k4)) worldBlocksData.set(k4, 'planks');
                                 }
                             }
                         }
@@ -241,7 +274,11 @@ window.addEventListener('DOMContentLoaded', async () => {
                         if (hash > 0.05 && hash < 0.07) {
                             const trunkHeight = 4 + Math.floor(hash * 100) % 3;
                             for (let th = 1; th <= trunkHeight; th++) {
-                                worldBlocksData.set(`${wx},${surfaceY + th},${wz}`, 'log');
+                                const logKey = `${wx},${surfaceY + th},${wz}`;
+                                // FIX: Stop the chunk engine from instantly regenerating broken logs
+                                if (!worldBlocksData.has(logKey)) {
+                                    worldBlocksData.set(logKey, 'log');
+                                }
                             }
                             const leafBase = surfaceY + trunkHeight;
                             for (let lx = -2; lx <= 2; lx++) {
@@ -261,7 +298,6 @@ window.addEventListener('DOMContentLoaded', async () => {
             }
         }
 
-        // Pass 3: Bind keys and convert block definitions to instance data loops
         worldBlocksData.forEach((type, key) => {
             if (type === 'air') return;
             const [bx, by, bz] = key.split(',').map(Number);
@@ -474,13 +510,12 @@ window.addEventListener('DOMContentLoaded', async () => {
 
                     miningProgress += dt * MINING_SPEED;
                     
-                    // Maps the timeline 0.0 -> 1.0 down into 0-9 index choices matching file names safely
                     const textureIdx = Math.min(Math.floor(miningProgress * 10), 9);
                     crackMat.map = breakTextures[textureIdx];
                     crackMat.needsUpdate = true;
 
                     if (miningProgress >= 1.0) {
-                        worldBlocksData.set(targetKey, 'air');
+                        worldBlocksData.set(targetKey, 'air'); // Marks it broken so the chunk ignores it from now on!
                         miningTargetKey = null;
                         crackMesh.visible = false;
 
@@ -616,12 +651,11 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    // Explicit compilation pass to ensure all structures register indices prior to physics ticking
     const spawnX = Math.floor(player.position.x / 16);
     const spawnZ = Math.floor(player.position.z / 16);
     updateChunks(spawnX, spawnZ);
     rebuildRaycastTargetsList();
 
     requestAnimationFrame(animate);
-    console.log('Textures Synchronized. Breaking overlays active.');
+    console.log('Tree Regen Bug squashed & Dynamic Animation Fallbacks active.');
 });
