@@ -1,9 +1,7 @@
 import * as THREE from 'three';
 
-// Wrap everything to guarantee it never crashes by firing before the HTML body exists
 window.addEventListener('DOMContentLoaded', async () => {
     
-    // ---- Bulletproof DOM Hooks (Won't crash if missing) ----
     const uiPos = document.getElementById('posDisplay');
     const uiChunks = document.getElementById('chunkCount');
     const uiFps = document.getElementById('fpsDisplay');
@@ -11,7 +9,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     function setHTML(el, text) { if (el) el.textContent = text; }
 
-    // ---- UI Creation ----
+    // ---- UI Elements ----
     const crosshair = document.createElement('div');
     crosshair.style.position = 'absolute';
     crosshair.style.top = '50%';
@@ -39,7 +37,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     invHUD.textContent = 'Selected: [1] Grass Block';
     document.body.appendChild(invHUD);
 
-    // ---- Audio Setup (Crash-proof if file is blocked or missing) ----
+    // ---- Audio ----
     const music = new Audio('music.mp3');
     music.loop = true;
     music.volume = 0.3;
@@ -80,7 +78,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     dirLight.position.set(10, 20, 7);
     scene.add(dirLight);
 
-    // ---- Textures (Crash-proof against local CORS restrictions) ----
+    // ---- Textures ----
     const textureLoader = new THREE.TextureLoader();
     function createFallbackTexture(color) {
         const canvas = document.createElement('canvas');
@@ -93,42 +91,70 @@ window.addEventListener('DOMContentLoaded', async () => {
         return tex;
     }
 
-    function loadTexture(name, fallbackColor) {
+    function loadTexture(filename, fallbackColor) {
         return new Promise((resolve) => {
             textureLoader.load(
-                `${name}.png`,
+                filename,
                 (tex) => {
                     tex.magFilter = THREE.NearestFilter;
                     tex.minFilter = THREE.NearestFilter;
                     resolve(tex);
                 },
                 undefined,
-                () => resolve(createFallbackTexture(fallbackColor)) // Seamlessly fallback to colored blocks if image fails
+                () => resolve(createFallbackTexture(fallbackColor))
             );
         });
     }
 
-    const [grassTex, dirtTex, cobbleTex] = await Promise.all([
-        loadTexture('grass', '#7ec850'),
-        loadTexture('dirt', '#8b5a2b'),
-        loadTexture('cobblestone', '#808080'),
+    // Loading your specific requested .png names cleanly
+    const [grassTex, dirtTex, cobbleTex, logSideTex, logTopTex, leavesTex, planksTex] = await Promise.all([
+        loadTexture('grass.png', '#7ec850'),
+        loadTexture('dirt.png', '#8b5a2b'),
+        loadTexture('cobblestone.png', '#808080'),
+        loadTexture('log_side.png', '#5c4033'),
+        loadTexture('log_top.png', '#d2b48c'),
+        loadTexture('leaves.png', '#2e8b57'),
+        loadTexture('planks.png', '#a0522d')
     ]);
 
     const grassMat = new THREE.MeshLambertMaterial({ map: grassTex });
     const dirtMat = new THREE.MeshLambertMaterial({ map: dirtTex });
     const cobbleMat = new THREE.MeshLambertMaterial({ map: cobbleTex });
+    const logSideMat = new THREE.MeshLambertMaterial({ map: logSideTex });
+    const logTopMat = new THREE.MeshLambertMaterial({ map: logTopTex });
+    const leavesMat = new THREE.MeshLambertMaterial({ map: leavesTex });
+    const planksMat = new THREE.MeshLambertMaterial({ map: planksTex });
 
+    // Order: Right, Left, Top, Bottom, Front, Back
     const grassBlockMaterials = [dirtMat, dirtMat, grassMat, dirtMat, dirtMat, dirtMat];
     const dirtBlockMaterials = [dirtMat, dirtMat, dirtMat, dirtMat, dirtMat, dirtMat];
     const cobbleBlockMaterials = [cobbleMat, cobbleMat, cobbleMat, cobbleMat, cobbleMat, cobbleMat];
+    
+    // Wire up log_side on the 4 vertical sides, and log_top on top and bottom!
+    const logBlockMaterials = [logSideMat, logSideMat, logTopMat, logTopMat, logSideMat, logSideMat];
+    
+    const leavesBlockMaterials = [leavesMat, leavesMat, leavesMat, leavesMat, leavesMat, leavesMat];
+    const plankBlockMaterials = [planksMat, planksMat, planksMat, planksMat, planksMat, planksMat];
 
-    // ---- World Generation ----
+    // ---- Procedural Generation Math ----
     function getNoiseHeight(wx, wz) {
         const wave1 = Math.sin(wx * 0.05) * Math.cos(wz * 0.05) * 4;
         const wave2 = Math.sin(wx * 0.15 + 2) * 1.5;
         return Math.floor(wave1 + wave2);
     }
 
+    function coordHash(x, z) {
+        const val = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453123;
+        return Math.abs(val - Math.floor(val));
+    }
+
+    function isCaveSpace(wx, wy, wz) {
+        if (wy > getNoiseHeight(wx, wz) - 2) return false; 
+        const caveDensity = Math.sin(wx * 0.2) + Math.cos(wy * 0.2) + Math.sin(wz * 0.2);
+        return caveDensity > 1.3; 
+    }
+
+    // ---- Chunk System ----
     const CHUNK_SIZE = 16;
     const RENDER_DIST = 3;
     const loadedChunks = new Map();
@@ -144,7 +170,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         const ox = cx * CHUNK_SIZE;
         const oz = cz * CHUNK_SIZE;
 
-        const categorizedPositions = { grass: [], dirt: [], cobblestone: [] };
+        const categorizedPositions = { grass: [], dirt: [], cobblestone: [], log: [], leaves: [], planks: [] };
 
         for (let x = 0; x < CHUNK_SIZE; x++) {
             for (let z = 0; z < CHUNK_SIZE; z++) {
@@ -152,14 +178,64 @@ window.addEventListener('DOMContentLoaded', async () => {
                 const wz = oz + z;
                 const surfaceY = getNoiseHeight(wx, wz);
                 
-                for (let wy = surfaceY - 3; wy <= surfaceY; wy++) {
+                for (let wy = surfaceY - 6; wy <= surfaceY; wy++) {
                     const key = `${wx},${wy},${wz}`;
+                    
                     if (!worldBlocksData.has(key)) {
+                        if (isCaveSpace(wx, wy, wz)) {
+                            worldBlocksData.set(key, 'air');
+                            continue;
+                        }
+
                         if (wy === surfaceY) {
-                            const rand = Math.abs(Math.floor(Math.sin(wx * 12.9898 + wz * 78.233) * 43758)) % 100;
-                            worldBlocksData.set(key, rand < 4 ? 'cobblestone' : 'grass');
-                        } else {
+                            worldBlocksData.set(key, 'grass');
+                        } else if (wy > surfaceY - 3) {
                             worldBlocksData.set(key, 'dirt');
+                        } else {
+                            worldBlocksData.set(key, 'cobblestone');
+                        }
+                    }
+                }
+
+                const surfaceKey = `${wx},${surfaceY},${wz}`;
+                if (worldBlocksData.get(surfaceKey) === 'grass') {
+                    const hash = coordHash(wx, wz);
+
+                    // Scatter Trees
+                    if (hash > 0.05 && hash < 0.07) {
+                        const trunkHeight = 4 + Math.floor(hash * 100) % 3;
+                        for (let th = 1; th <= trunkHeight; th++) {
+                            worldBlocksData.set(`${wx},${surfaceY + th},${wz}`, 'log');
+                        }
+                        const leafBase = surfaceY + trunkHeight;
+                        for (let lx = -2; lx <= 2; lx++) {
+                            for (let lz = -2; lz <= 2; lz++) {
+                                for (let ly = -1; ly <= 2; ly++) {
+                                    if (Math.abs(lx) + Math.abs(lz) + Math.abs(ly) > 3) continue; 
+                                    const lKey = `${wx + lx},${leafBase + ly},${wz + lz}`;
+                                    if (!worldBlocksData.has(lKey)) {
+                                        worldBlocksData.set(lKey, 'leaves');
+                                    }
+                                }
+                            }
+                        }
+                    } 
+                    // Scatter Village Features
+                    else if (hash < 0.005) {
+                        for (let vx = -2; vx <= 2; vx++) {
+                            for (let vz = -2; vz <= 2; vz++) {
+                                const baseKey = `${wx + vx},${surfaceY},${wz + vz}`;
+                                worldBlocksData.set(baseKey, 'planks'); 
+                                
+                                if (Math.abs(vx) === 2 && Math.abs(vz) === 2) {
+                                    worldBlocksData.set(`${wx + vx},${surfaceY + 1},${wz + vz}`, 'cobblestone');
+                                    worldBlocksData.set(`${wx + vx},${surfaceY + 2},${wz + vz}`, 'cobblestone');
+                                    worldBlocksData.set(`${wx + vx},${surfaceY + 3},${wz + vz}`, 'planks');
+                                }
+                                if (surfaceY > 0 && (Math.abs(vx) <= 2 && Math.abs(vz) <= 2) && (Math.abs(vx) === 2 || Math.abs(vz) === 2)) {
+                                    worldBlocksData.set(`${wx + vx},${surfaceY + 4},${wz + vz}`, 'planks');
+                                }
+                            }
                         }
                     }
                 }
@@ -187,6 +263,9 @@ window.addEventListener('DOMContentLoaded', async () => {
             let mats = dirtBlockMaterials;
             if (type === 'grass') mats = grassBlockMaterials;
             if (type === 'cobblestone') mats = cobbleBlockMaterials;
+            if (type === 'log') mats = logBlockMaterials;
+            if (type === 'leaves') mats = leavesBlockMaterials;
+            if (type === 'planks') mats = plankBlockMaterials;
 
             const instMesh = new THREE.InstancedMesh(blockGeom, mats, blocks.length);
             instMesh.userData = { blockKeys: [] };
@@ -253,7 +332,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     // ---- Player Physics ----
     const player = {
-        position: new THREE.Vector3(0, getNoiseHeight(0, 0) + 3, 0),
+        position: new THREE.Vector3(0, getNoiseHeight(0, 0) + 4, 0),
         velocity: new THREE.Vector3(),
         onGround: false,
         yaw: 0,
@@ -290,6 +369,9 @@ window.addEventListener('DOMContentLoaded', async () => {
         if (e.code === 'Digit1') { selectedBlockType = 'grass'; invHUD.textContent = 'Selected: [1] Grass Block'; }
         if (e.code === 'Digit2') { selectedBlockType = 'dirt'; invHUD.textContent = 'Selected: [2] Dirt Block'; }
         if (e.code === 'Digit3') { selectedBlockType = 'cobblestone'; invHUD.textContent = 'Selected: [3] Cobblestone'; }
+        if (e.code === 'Digit4') { selectedBlockType = 'log'; invHUD.textContent = 'Selected: [4] Wood Log'; }
+        if (e.code === 'Digit5') { selectedBlockType = 'leaves'; invHUD.textContent = 'Selected: [5] Leaf Leaves'; }
+        if (e.code === 'Digit6') { selectedBlockType = 'planks'; invHUD.textContent = 'Selected: [6] Wood Planks'; }
     });
     window.addEventListener('keyup', e => { keys[e.code] = false; });
 
@@ -362,7 +444,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     function isSolid(wx, wy, wz) {
         const key = `${wx},${wy},${wz}`;
         if (worldBlocksData.has(key)) return worldBlocksData.get(key) !== 'air';
-        // CRITICAL FIX: If player outruns chunk generation, they hit solid noise instead of infinite void
+        if (isCaveSpace(wx, wy, wz)) return false; 
         return wy <= getNoiseHeight(wx, wz); 
     }
 
@@ -383,8 +465,9 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     function updatePlayer(dt) {
         const moveDir = new THREE.Vector3();
-        if (keys['KeyS']) moveDir.z -= 1;
-        if (keys['KeyW']) moveDir.z += 1;
+        
+        if (keys['KeyW']) moveDir.z += 1; 
+        if (keys['KeyS']) moveDir.z -= 1; 
         if (keys['KeyA']) moveDir.x -= 1;
         if (keys['KeyD']) moveDir.x += 1;
         if (moveDir.lengthSq() > 0) moveDir.normalize();
@@ -448,7 +531,6 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     function animate(time) {
         requestAnimationFrame(animate);
-        // Capped dt prevents physics breaking if tab is backgrounded
         const dt = lastTime === 0 ? 0.016 : Math.min((time - lastTime) / 1000, 0.1); 
         lastTime = time;
         
@@ -464,12 +546,11 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    // Initialize the very first chunk directly under the player before starting loop
     const initialChunk = createChunk(0, 0);
     loadedChunks.set("0,0", initialChunk);
     scene.add(initialChunk);
     rebuildRaycastTargetsList();
 
     requestAnimationFrame(animate);
-    console.log('Engine Online (Bulletproof Version)');
+    console.log('Engine Online: Multi-Material Logs Registered.');
 });
