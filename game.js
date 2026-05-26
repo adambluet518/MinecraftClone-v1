@@ -106,7 +106,6 @@ window.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // Loading your specific requested .png names cleanly
     const [grassTex, dirtTex, cobbleTex, logSideTex, logTopTex, leavesTex, planksTex] = await Promise.all([
         loadTexture('grass.png', '#7ec850'),
         loadTexture('dirt.png', '#8b5a2b'),
@@ -125,16 +124,54 @@ window.addEventListener('DOMContentLoaded', async () => {
     const leavesMat = new THREE.MeshLambertMaterial({ map: leavesTex });
     const planksMat = new THREE.MeshLambertMaterial({ map: planksTex });
 
-    // Order: Right, Left, Top, Bottom, Front, Back
     const grassBlockMaterials = [dirtMat, dirtMat, grassMat, dirtMat, dirtMat, dirtMat];
     const dirtBlockMaterials = [dirtMat, dirtMat, dirtMat, dirtMat, dirtMat, dirtMat];
     const cobbleBlockMaterials = [cobbleMat, cobbleMat, cobbleMat, cobbleMat, cobbleMat, cobbleMat];
-    
-    // Wire up log_side on the 4 vertical sides, and log_top on top and bottom!
     const logBlockMaterials = [logSideMat, logSideMat, logTopMat, logTopMat, logSideMat, logSideMat];
-    
     const leavesBlockMaterials = [leavesMat, leavesMat, leavesMat, leavesMat, leavesMat, leavesMat];
     const plankBlockMaterials = [planksMat, planksMat, planksMat, planksMat, planksMat, planksMat];
+
+    // ---- Cracking Overlay System Setup ----
+    const crackCanvas = document.createElement('canvas');
+    crackCanvas.width = 64; crackCanvas.height = 64;
+    const crackCtx = crackCanvas.getContext('2d');
+    const crackTexture = new THREE.CanvasTexture(crackCanvas);
+    crackTexture.magFilter = THREE.NearestFilter;
+    
+    // Wire up a single ghost overlay block that moves over whatever block you are mining
+    const crackMat = new THREE.MeshLambertMaterial({ 
+        map: crackTexture, 
+        transparent: true, 
+        polygonOffset: true, 
+        polygonOffsetFactor: -1, // Positions overlay slightly above base surfaces to kill z-fighting glitches
+        blending: THREE.MultiplyBlending 
+    });
+    const crackMesh = new THREE.Mesh(new THREE.BoxGeometry(1.01, 1.01, 1.01), crackMat);
+    crackMesh.visible = false;
+    scene.add(crackMesh);
+
+    // Procedural generation of 10 destruction stages
+    function updateCrackTexture(stage) {
+        crackCtx.clearRect(0, 0, 64, 64);
+        if (stage <= 0) { crackTexture.needsUpdate = true; return; }
+        
+        crackCtx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+        crackCtx.lineWidth = 2;
+        crackCtx.beginPath();
+        
+        const lines = stage * 3;
+        for(let i=0; i<lines; i++) {
+            const seed = i * 4567;
+            const x1 = Math.abs(Math.sin(seed)) * 64;
+            const y1 = Math.abs(Math.cos(seed)) * 64;
+            const x2 = x1 + (Math.sin(seed + 1) * 15);
+            const y2 = y1 + (Math.cos(seed + 2) * 15);
+            crackCtx.moveTo(x1, y1);
+            crackCtx.lineTo(x2, y2);
+        }
+        crackCtx.stroke();
+        crackTexture.needsUpdate = true;
+    }
 
     // ---- Procedural Generation Math ----
     function getNoiseHeight(wx, wz) {
@@ -172,6 +209,14 @@ window.addEventListener('DOMContentLoaded', async () => {
 
         const categorizedPositions = { grass: [], dirt: [], cobblestone: [], log: [], leaves: [], planks: [] };
 
+        // FIX 1: Evaluate well structural chance ONCE per entire chunk wrapper
+        const chunkHash = coordHash(cx * 31, cz * 73);
+        const spawnWellInChunk = (chunkHash < 0.05); // Balanced 5% chance per chunk
+        
+        // Pick a coordinate inside the chunk boundaries for the well center point
+        const wellCenterX = ox + 4 + Math.floor(chunkHash * 1000) % 8;
+        const wellCenterZ = oz + 4 + Math.floor(chunkHash * 2000) % 8;
+
         for (let x = 0; x < CHUNK_SIZE; x++) {
             for (let z = 0; z < CHUNK_SIZE; z++) {
                 const wx = ox + x;
@@ -199,29 +244,8 @@ window.addEventListener('DOMContentLoaded', async () => {
 
                 const surfaceKey = `${wx},${surfaceY},${wz}`;
                 if (worldBlocksData.get(surfaceKey) === 'grass') {
-                    const hash = coordHash(wx, wz);
-
-                    // Scatter Trees
-                    if (hash > 0.05 && hash < 0.07) {
-                        const trunkHeight = 4 + Math.floor(hash * 100) % 3;
-                        for (let th = 1; th <= trunkHeight; th++) {
-                            worldBlocksData.set(`${wx},${surfaceY + th},${wz}`, 'log');
-                        }
-                        const leafBase = surfaceY + trunkHeight;
-                        for (let lx = -2; lx <= 2; lx++) {
-                            for (let lz = -2; lz <= 2; lz++) {
-                                for (let ly = -1; ly <= 2; ly++) {
-                                    if (Math.abs(lx) + Math.abs(lz) + Math.abs(ly) > 3) continue; 
-                                    const lKey = `${wx + lx},${leafBase + ly},${wz + lz}`;
-                                    if (!worldBlocksData.has(lKey)) {
-                                        worldBlocksData.set(lKey, 'leaves');
-                                    }
-                                }
-                            }
-                        }
-                    } 
-                    // Scatter Village Features
-                    else if (hash < 0.005) {
+                    // Check if this position matches our singular pre-calculated chunk well location
+                    if (spawnWellInChunk && wx === wellCenterX && wz === wellCenterZ) {
                         for (let vx = -2; vx <= 2; vx++) {
                             for (let vz = -2; vz <= 2; vz++) {
                                 const baseKey = `${wx + vx},${surfaceY},${wz + vz}`;
@@ -237,6 +261,27 @@ window.addEventListener('DOMContentLoaded', async () => {
                                 }
                             }
                         }
+                    } else {
+                        // Regular flora generation calculations
+                        const hash = coordHash(wx, wz);
+                        if (hash > 0.05 && hash < 0.07) {
+                            const trunkHeight = 4 + Math.floor(hash * 100) % 3;
+                            for (let th = 1; th <= trunkHeight; th++) {
+                                worldBlocksData.set(`${wx},${surfaceY + th},${wz}`, 'log');
+                            }
+                            const leafBase = surfaceY + trunkHeight;
+                            for (let lx = -2; lx <= 2; lx++) {
+                                for (let lz = -2; lz <= 2; lz++) {
+                                    for (let ly = -1; ly <= 2; ly++) {
+                                        if (Math.abs(lx) + Math.abs(lz) + Math.abs(ly) > 3) continue; 
+                                        const lKey = `${wx + lx},${leafBase + ly},${wz + lz}`;
+                                        if (!worldBlocksData.has(lKey)) {
+                                            worldBlocksData.set(lKey, 'leaves');
+                                        }
+                                    }
+                                }
+                            }
+                        } 
                     }
                 }
             }
@@ -330,7 +375,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         setHTML(uiChunks, loadedChunks.size);
     }
 
-    // ---- Player Physics ----
+    // ---- Player Physics & Interaction ----
     const player = {
         position: new THREE.Vector3(0, getNoiseHeight(0, 0) + 4, 0),
         velocity: new THREE.Vector3(),
@@ -340,6 +385,12 @@ window.addEventListener('DOMContentLoaded', async () => {
     };
 
     let selectedBlockType = 'grass';
+    
+    // Track current breaking progress state
+    let miningTargetKey = null;
+    let miningProgress = 0; 
+    const MINING_SPEED = 3.5; // Controls how fast blocks break
+
     renderer.domElement.addEventListener('click', () => {
         if (document.pointerLockElement !== renderer.domElement) {
             renderer.domElement.requestPointerLock();
@@ -353,6 +404,8 @@ window.addEventListener('DOMContentLoaded', async () => {
         } else {
             document.removeEventListener('mousemove', onMouseMove);
             document.removeEventListener('mousedown', onMouseDown);
+            miningTargetKey = null;
+            crackMesh.visible = false;
         }
     });
 
@@ -379,33 +432,18 @@ window.addEventListener('DOMContentLoaded', async () => {
     const mouseCenter = new THREE.Vector2(0, 0);
 
     function onMouseDown(e) {
-        raycaster.setFromCamera(mouseCenter, camera);
-        const intersects = raycaster.intersectObjects(raycastTargets, false);
+        if (e.button === 2) { 
+            // Handle block placement instantly on Right Click
+            raycaster.setFromCamera(mouseCenter, camera);
+            const intersects = raycaster.intersectObjects(raycastTargets, false);
+            if (intersects.length > 0 && intersects[0].distance <= 6) {
+                const hit = intersects[0];
+                const hitMesh = hit.object;
+                const instanceId = hit.instanceId;
+                if (instanceId === undefined || !hitMesh.userData.blockKeys) return;
+                const targetKey = hitMesh.userData.blockKeys[instanceId];
+                if (!targetKey) return;
 
-        if (intersects.length > 0 && intersects[0].distance <= 6) {
-            const hit = intersects[0];
-            const hitMesh = hit.object;
-            const instanceId = hit.instanceId;
-
-            if (instanceId === undefined || !hitMesh.userData.blockKeys) return;
-            const targetKey = hitMesh.userData.blockKeys[instanceId];
-            if (!targetKey) return;
-
-            const [bx, by, bz] = targetKey.split(',').map(Number);
-            const cx = Math.floor(bx / CHUNK_SIZE);
-            const cz = Math.floor(bz / CHUNK_SIZE);
-            const chunkKey = `${cx},${cz}`;
-
-            if (e.button === 0) { 
-                worldBlocksData.set(targetKey, 'air');
-                if (loadedChunks.has(chunkKey)) {
-                    scene.remove(loadedChunks.get(chunkKey));
-                    const freshChunk = createChunk(cx, cz);
-                    loadedChunks.set(chunkKey, freshChunk);
-                    scene.add(freshChunk);
-                    rebuildRaycastTargetsList();
-                }
-            } else if (e.button === 2) { 
                 const instanceMatrix = new THREE.Matrix4();
                 hitMesh.getMatrixAt(instanceId, instanceMatrix);
                 const hitBlockPos = new THREE.Vector3().setFromMatrixPosition(instanceMatrix);
@@ -441,6 +479,67 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    function checkMiningInteraction(dt) {
+        // Evaluate mouse button inputs inside continuous physics check
+        if (document.pointerLockElement === renderer.domElement && keys['MouseDown0']) { 
+            raycaster.setFromCamera(mouseCenter, camera);
+            const intersects = raycaster.intersectObjects(raycastTargets, false);
+
+            if (intersects.length > 0 && intersects[0].distance <= 6) {
+                const hit = intersects[0];
+                const hitMesh = hit.object;
+                const instanceId = hit.instanceId;
+                const targetKey = hitMesh.userData.blockKeys ? hitMesh.userData.blockKeys[instanceId] : null;
+
+                if (targetKey) {
+                    const [bx, by, bz] = targetKey.split(',').map(Number);
+                    
+                    // If target changed, reset mining metrics
+                    if (miningTargetKey !== targetKey) {
+                        miningTargetKey = targetKey;
+                        miningProgress = 0;
+                        crackMesh.position.set(bx + 0.5, by + 0.5, bz + 0.5);
+                        crackMesh.visible = true;
+                    }
+
+                    miningProgress += dt * MINING_SPEED;
+                    const stage = Math.min(Math.floor(miningProgress * 10), 10);
+                    updateCrackTexture(stage);
+
+                    // Block Breaks fully!
+                    if (miningProgress >= 1.0) {
+                        worldBlocksData.set(targetKey, 'air');
+                        miningTargetKey = null;
+                        crackMesh.visible = false;
+
+                        const cx = Math.floor(bx / CHUNK_SIZE);
+                        const cz = Math.floor(bz / CHUNK_SIZE);
+                        const chunkKey = `${cx},${cz}`;
+
+                        if (loadedChunks.has(chunkKey)) {
+                            scene.remove(loadedChunks.get(chunkKey));
+                            const freshChunk = createChunk(cx, cz);
+                            loadedChunks.set(chunkKey, freshChunk);
+                            scene.add(freshChunk);
+                            rebuildRaycastTargetsList();
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+        
+        // Reset if we stop holding Left Click or look away
+        if (miningTargetKey !== null) {
+            miningTargetKey = null;
+            crackMesh.visible = false;
+        }
+    }
+
+    // Keep state of mouse button flags
+    window.addEventListener('mousedown', e => { if(e.button === 0) keys['MouseDown0'] = true; });
+    window.addEventListener('mouseup', e => { if(e.button === 0) keys['MouseDown0'] = false; });
+
     function isSolid(wx, wy, wz) {
         const key = `${wx},${wy},${wz}`;
         if (worldBlocksData.has(key)) return worldBlocksData.get(key) !== 'air';
@@ -464,8 +563,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
 
     function updatePlayer(dt) {
+        checkMiningInteraction(dt);
+
         const moveDir = new THREE.Vector3();
-        
         if (keys['KeyW']) moveDir.z += 1; 
         if (keys['KeyS']) moveDir.z -= 1; 
         if (keys['KeyA']) moveDir.x -= 1;
@@ -546,11 +646,12 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    // FIX 2: Initialize world chunks and target definitions immediately so generation models are fully destroyable off spawn
     const initialChunk = createChunk(0, 0);
     loadedChunks.set("0,0", initialChunk);
     scene.add(initialChunk);
     rebuildRaycastTargetsList();
 
     requestAnimationFrame(animate);
-    console.log('Engine Online: Multi-Material Logs Registered.');
+    console.log('Engine Online: Fixes Loaded & Cracking Pipeline Implemented.');
 });
