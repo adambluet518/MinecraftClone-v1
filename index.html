@@ -7,68 +7,58 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <!-- Audio Element for Background Music -->
     <audio id="bg-music" loop preload="auto">
         <source src="music.mp3" type="audio/mpeg">
     </audio>
 
-    <!-- Game Canvas Container -->
     <div id="game-container">
         <canvas id="game-canvas"></canvas>
     </div>
 
-    <!-- Crosshair -->
     <div id="crosshair">
         <div class="crosshair-line crosshair-h"></div>
         <div class="crosshair-line crosshair-v"></div>
-        <div class="crosshair-dot"></div>
     </div>
 
-    <!-- Hotbar -->
     <div id="hotbar">
-        <div class="hotbar-slot" data-block="1" data-name="Grass">
-            <canvas class="hotbar-preview" width="40" height="40"></canvas>
+        <div class="hotbar-slot selected" data-block="grass">
+            <img src="grass.png" class="hotbar-icon" alt="Grass">
             <span class="hotbar-label">1</span>
         </div>
-        <div class="hotbar-slot" data-block="2" data-name="Dirt">
-            <canvas class="hotbar-preview" width="40" height="40"></canvas>
+        <div class="hotbar-slot" data-block="dirt">
+            <img src="dirt.png" class="hotbar-icon" alt="Dirt">
             <span class="hotbar-label">2</span>
         </div>
-        <div class="hotbar-slot selected" data-block="3" data-name="Stone">
-            <canvas class="hotbar-preview" width="40" height="40"></canvas>
+        <div class="hotbar-slot" data-block="cobblestone">
+            <img src="cobblestone.png" class="hotbar-icon" alt="Stone">
             <span class="hotbar-label">3</span>
         </div>
-        <div class="hotbar-slot" data-block="4" data-name="Log">
-            <canvas class="hotbar-preview" width="40" height="40"></canvas>
+        <div class="hotbar-slot" data-block="log">
+            <img src="log_side.png" class="hotbar-icon" alt="Log">
             <span class="hotbar-label">4</span>
         </div>
-        <div class="hotbar-slot" data-block="5" data-name="Leaves">
-            <canvas class="hotbar-preview" width="40" height="40"></canvas>
+        <div class="hotbar-slot" data-block="leaves">
+            <img src="leaves.png" class="hotbar-icon" alt="Leaves">
             <span class="hotbar-label">5</span>
         </div>
-        <div class="hotbar-slot" data-block="6" data-name="Planks">
-            <canvas class="hotbar-preview" width="40" height="40"></canvas>
+        <div class="hotbar-slot" data-block="planks">
+            <img src="planks.png" class="hotbar-icon" alt="Planks">
             <span class="hotbar-label">6</span>
         </div>
     </div>
 
-    <!-- Block name tooltip -->
-    <div id="block-name">Stone</div>
+    <div id="block-name">Grass</div>
 
-    <!-- Instructions overlay -->
     <div id="instructions">
         <h2>🎮 MiniCraft Controls</h2>
-        <p><b>WASD</b> - Move &nbsp;|&nbsp; <b>Space</b> - Jump &nbsp;|&nbsp; <b>Mouse</b> - Look Around</p>
-        <p><b>Left Click</b> - Mine Block &nbsp;|&nbsp; <b>Right Click</b> - Place Block</p>
-        <p><b>1-6</b> or <b>Scroll</b> - Select Block &nbsp;|&nbsp; <b>M</b> - Toggle Music</p>
-        <p><b>ESC</b> - Release Cursor</p>
-        <p class="click-to-start">Click anywhere to start playing!</p>
+        <p><b>WASD</b> - Move | <b>Space</b> - Jump | <b>Mouse</b> - Look</p>
+        <p><b>Left Click</b> - Mine | <b>Right Click</b> - Place</p>
+        <p><b>1-6 / Scroll</b> - Select Block | <b>M</b> - Music</p>
+        <p class="click-to-start">Click to play!</p>
     </div>
 
-    <!-- Music toggle button -->
     <button id="music-toggle" title="Toggle Music">🔇</button>
 
-    <!-- Three.js Import Map -->
     <script type="importmap">
         {
             "imports": {
@@ -76,8 +66,6 @@
             }
         }
     </script>
-
-    <!-- Game Script -->
     <script type="module" src="game.js"></script>
 </body>
 </html>
